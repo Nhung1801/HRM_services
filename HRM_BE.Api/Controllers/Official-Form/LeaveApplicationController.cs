@@ -1,0 +1,320 @@
+﻿using AutoMapper;
+using Hangfire;
+using HRM_BE.Api.Services;
+using HRM_BE.Core.Constants;
+using HRM_BE.Core.Data.Official_Form;
+using HRM_BE.Core.Data.Payroll_Timekeeping.LeaveRegulation;
+using HRM_BE.Core.Data.Payroll_Timekeeping.TimekeepingRegulation;
+using HRM_BE.Core.Data.Staff;
+using HRM_BE.Core.Exceptions;
+using HRM_BE.Core.ISeedWorks;
+using HRM_BE.Core.Models.Common;
+using HRM_BE.Core.Models.Content.Banner;
+using HRM_BE.Core.Models.Official_Form.LeaveApplication;
+using HRM_BE.Core.Models.Staff;
+using HRM_BE.Data;
+using HRM_BE.Data.Migrations;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
+
+namespace HRM_BE.Api.Controllers.Official_Form
+{
+    [Route("api/leave-application")]
+    [ApiController]
+    public class LeaveApplicationController : ControllerBase
+    {
+        public readonly IUnitOfWork _unitOfWork;
+        public readonly IMapper _mapper;
+        private readonly HrmContext _dbContext;
+
+        public LeaveApplicationController(IUnitOfWork unitOfWork, IMapper mapper,HrmContext context)
+        {
+            _unitOfWork = unitOfWork;
+            _mapper = mapper;
+            _dbContext = context;
+        }
+        /// <summary>
+        /// HRM - Là Nhân viên,HR tôi muốn xem danh sách đơn xin nghỉ
+        /// </summary>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        [HttpGet("paging")]
+        public async Task<ApiResult<PagingResult<LeaveApplicationDto>>> GetPaging([FromQuery] GetLeaveApplicationRequest request)
+        {
+            var result = await _unitOfWork.LeaveApplications.GetPaging(request.OrganizationId,request.EmployeeId, request.StartDate,request.EndDate,request.NumberOfDays, request.TypeOfLeaveId,request.ReasonForLeave, request.Note,request.Status,request.SortBy, request.OrderBy, request.PageIndex,request.PageSize);
+            return new ApiResult<PagingResult<LeaveApplicationDto>>("Danh sách đơn xin nghỉ đã được lấy thành công!", result);
+        }
+
+        [HttpGet("get-by-id")]
+        public async Task<ApiResult<LeaveApplicationDto>> GetById([FromQuery] EntityIdentityRequest<int> request)
+        {
+            var result = await _unitOfWork.LeaveApplications.GetById(request.Id);
+            return new ApiResult<LeaveApplicationDto>("Đơn xin nghỉ đã được lấy thành công!", result);
+        }
+
+        /// <summary>
+        /// HRM- Là nhân viên tôi muốn xem tổng số ngày nghỉ theo tổng thời gian
+        /// </summary>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        [HttpGet("get-total-number-of-days-off")]
+        public async Task<ApiResult<TotalNumberOfDaysOffDto>> GetTotalNumberOfDaysOff([FromQuery] GetTotalNumberOfDaysOffRequest request)
+        {
+            var result = await _unitOfWork.LeaveApplications.GetTotalNumberOfDaysOff(request.StartDate,request.EndDate,request.EmployeeId);
+            return new ApiResult<TotalNumberOfDaysOffDto>("Tổng số ngày nghỉ đã được lấy thành công!", result);
+        }
+
+        /// <summary>
+        /// HRM- Xem số ngày nghỉ mà theo lịch đi làm được nghỉ trong khoảng thời gian
+        /// </summary>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        [HttpGet("get-count-scheduled-day-offs")]
+        public async Task<ApiResult<double>> CountScheduledDayOffs([FromQuery] GetTotalNumberOfDaysOffRequest request)
+        {
+            var result = await _unitOfWork.LeaveApplications.CountScheduledDayOffs((DateTime)request.StartDate, (DateTime)request.EndDate, request.EmployeeId);
+            return new ApiResult<double>("Tổng số ngày nghỉ theo lịch lấy thành công!", result);
+        }
+
+        /// <summary>
+        /// HRM- Là nhân viên tôi muốn tạo đơn xin nghỉ
+        /// </summary>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        [HttpPost("create")]
+        public async Task<ApiResult<LeaveApplicationDto>> Create([FromBody] CreateLeaveApplicationRequest request)
+        {
+            var status = await _unitOfWork.TypeOfLeaveEmployee.CheckDaysRemaining(request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.DaysRemaining, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.EmployeeId, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.TypeOfLeaveId, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.Year);
+            if(status == false)
+            {
+                return ApiResult<LeaveApplicationDto>.Failure($"Số ngày nghỉ vượt quá số ngày nghỉ cho phép của loại nghỉ phép {request.TypeOfLeaveName} trong năm {request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.Year.ToString()}");
+
+            }
+            var leaveApplication = _mapper.Map<LeaveApplication>(request);
+
+            var result = await _unitOfWork.LeaveApplications.CreateAsync(leaveApplication);
+            await _unitOfWork.TypeOfLeaveEmployee.UpdateDaysRemaining(request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.DaysRemaining, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.EmployeeId, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.TypeOfLeaveId, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.Year);
+
+            // Check số lượng nghỉ và đổi trạng thái nghỉ phép
+            //await _unitOfWork.LeavePermissions.TriggerUpdateNumberLeavePermission(result.EmployeeId.Value, result.Id, result.StartDate.Value);
+
+            return ApiResult<LeaveApplicationDto>.Success("Tạo đơn xin nghỉ việc thành công", _mapper.Map<LeaveApplicationDto>(result));
+        }
+
+        [HttpPut("update")]
+        public async Task<ApiResult<bool>> Update(int id, [FromBody] UpdateLeaveApplicationRequest request)
+        {
+            await _unitOfWork.LeaveApplications.Update(id, request);
+            return ApiResult<bool>.Success("Cập nhật đơn xin nghỉ thành công", true);
+        }
+        /// <summary>
+        /// HRM- Là HR tôi muốn duyệt đơn xin nghỉ
+        /// </summary>
+        /// <param name="id"></param>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        [HttpPut("update-status")]
+        public async Task<ApiResult<bool>> UpdateStatus(int id, [FromBody] UpdateStatusLeaveApplicationRequest request)
+        {
+            if (request.Status == LeaveApplicationStatus.Rejected)
+            {
+                await _unitOfWork.TypeOfLeaveEmployee.UpdateDaysRemaining(-request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.DaysRemaining, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.EmployeeId, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.TypeOfLeaveId, request.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.Year);
+            }
+            await _unitOfWork.LeaveApplications.UpdateStatus(id, request.Status, request.ApproverNote);
+            var leaveApplication = await _unitOfWork.LeaveApplications.GetById(id);
+            // xử lý trừ số ngày nghỉ trong bảng LeavePermission
+            if (request.Status.HasFlag(LeaveApplicationStatus.Approved) && leaveApplication.OnPaidLeaveStatus == OnPaidLeaveStatus.Yes)
+            {
+                //await _unitOfWork.LeavePermissions.TriggerUpdateNumberLeavePermission(leaveApplication.EmployeeId.Value, leaveApplication.NumberOfDays.Value, leaveApplication.StartDate.Value, leaveApplication.EndDate.Value);
+
+
+                var employeeId = leaveApplication.EmployeeId.Value;
+                var startDate = leaveApplication.StartDate.Value;
+                var endDate = leaveApplication.EndDate.Value;
+                var numberOfDay = leaveApplication.NumberOfDays.Value;
+
+                var leavePermission = await _dbContext.LeavePermissions.Where(l => l.EmployeeId == employeeId).FirstOrDefaultAsync();
+
+                if (leavePermission == null)
+                    throw new EntityNotFoundException("LeavePerrmission không tìm thấy");
+
+                var employee = await _dbContext.Employees.FindAsync(employeeId);
+                var organizationId = employee.OrganizationId;
+
+                var allShiftWorks = await _dbContext.ShiftWorks
+                    .Include(sw => sw.ShiftCatalog)
+                    .Where(sw => sw.OrganizationId == organizationId && sw.IsDeleted != true &&
+                                 sw.StartDate <= startDate &&
+                                  sw.EndDate >= endDate)
+                    .ToListAsync();
+                if (leavePermission.NumerOfLeave >= numberOfDay)
+                {
+                    leavePermission.NumerOfLeave -= numberOfDay;
+                    
+                    for (DateTime date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
+                    {
+                        var dayOfWeek = date.DayOfWeek;
+                        var shiftWorksForDay = allShiftWorks.Where(sw =>
+                            (dayOfWeek == DayOfWeek.Monday && sw.IsMonday == true) ||
+                            (dayOfWeek == DayOfWeek.Tuesday && sw.IsTuesday == true) ||
+                            (dayOfWeek == DayOfWeek.Wednesday && sw.IsWednesday == true) ||
+                            (dayOfWeek == DayOfWeek.Thursday && sw.IsThursday == true) ||
+                            (dayOfWeek == DayOfWeek.Friday && sw.IsFriday == true) ||
+                            (dayOfWeek == DayOfWeek.Saturday && sw.IsSaturday == true) ||
+                            (dayOfWeek == DayOfWeek.Sunday && sw.IsSunday == true))
+                            .ToList();
+                        var shiftWork = shiftWorksForDay.FirstOrDefault();
+
+                        //   có ca làm việc thì tự động chấm công 
+                        if (shiftWorksForDay.Any())
+                        {
+                            if (shiftWork != null)
+                            {
+                                BackgroundJob.Enqueue<JobHangFireService>(j => j.CreateTimeSheet(employeeId,date,shiftWork.Id,shiftWork.ShiftCatalog.WorkingHours.Value, TimeKeepingLeaveStatus.LeavePermission));
+                            }
+
+                        }
+                    }
+                }
+                else
+                {
+                    // Số phép còn lại nhỏ hơn số ngày nghỉ
+                    var remainingLeaveDays = leavePermission.NumerOfLeave;
+                    leavePermission.NumerOfLeave = 0;
+
+                    // Lặp qua từng ngày trong khoảng từ startDate đến endDate
+                    for (DateTime date = startDate.Date; date <= endDate.Date && remainingLeaveDays > 0; date = date.AddDays(1))
+                    {
+                        // Kiểm tra ngày có ca làm việc không
+                        var dayOfWeek = date.DayOfWeek;
+                        var shiftWorksForDay = allShiftWorks.Where(sw =>
+                            (dayOfWeek == DayOfWeek.Monday && sw.IsMonday == true) ||
+                            (dayOfWeek == DayOfWeek.Tuesday && sw.IsTuesday == true) ||
+                            (dayOfWeek == DayOfWeek.Wednesday && sw.IsWednesday == true) ||
+                            (dayOfWeek == DayOfWeek.Thursday && sw.IsThursday == true) ||
+                            (dayOfWeek == DayOfWeek.Friday && sw.IsFriday == true) ||
+                            (dayOfWeek == DayOfWeek.Saturday && sw.IsSaturday == true) ||
+                            (dayOfWeek == DayOfWeek.Sunday && sw.IsSunday == true))
+                            .ToList();
+
+                        // Nếu có ca làm việc
+                        if (shiftWorksForDay.Any())
+                        {
+                            var shiftWork = shiftWorksForDay.FirstOrDefault();
+                            if (shiftWork != null)
+                            {
+                                // Tạo schedule cho ngày này
+                                BackgroundJob.Enqueue<JobHangFireService>(
+                                    j => j.CreateTimeSheet(employeeId, date, shiftWork.Id, shiftWork.ShiftCatalog.WorkingHours.Value, TimeKeepingLeaveStatus.LeavePermission)
+                                );
+
+                                // Giảm số phép còn lại
+                                remainingLeaveDays--;
+                            }
+                        }
+
+                        // Dừng lặp nếu số phép đã hết
+                        if (remainingLeaveDays <= 0)
+                        {
+                            break;
+                        }
+                    }
+                }   
+                    await _dbContext.SaveChangesAsync();
+            }
+            else if (request.Status.HasFlag(LeaveApplicationStatus.Approved) && leaveApplication.OnPaidLeaveStatus == OnPaidLeaveStatus.No)
+            {
+                var employeeId = leaveApplication.EmployeeId.Value;
+                var startDate = leaveApplication.StartDate.Value;
+                var endDate = leaveApplication.EndDate.Value;
+                var numberOfDay = leaveApplication.NumberOfDays.Value;
+
+                //var leavePermission = await _dbContext.LeavePermissions.Where(l => l.EmployeeId == employeeId).FirstOrDefaultAsync();
+
+                //if (leavePermission == null)
+                //    throw new EntityNotFoundException("LeavePerrmission không tìm thấy");
+
+                var employee = await _dbContext.Employees.FindAsync(employeeId);
+                var organizationId = employee.OrganizationId;
+
+                var allShiftWorks = await _dbContext.ShiftWorks
+                    .Include(sw => sw.ShiftCatalog)
+                    .Where(sw => sw.OrganizationId == organizationId && sw.IsDeleted != true &&
+                                 sw.StartDate <= startDate &&
+                                 sw.EndDate >= endDate)
+                    .ToListAsync();
+                for (DateTime date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
+                {
+                    var dayOfWeek = date.DayOfWeek;
+                    var shiftWorksForDay = allShiftWorks.Where(sw =>
+                        (dayOfWeek == DayOfWeek.Monday && sw.IsMonday == true) ||
+                        (dayOfWeek == DayOfWeek.Tuesday && sw.IsTuesday == true) ||
+                        (dayOfWeek == DayOfWeek.Wednesday && sw.IsWednesday == true) ||
+                        (dayOfWeek == DayOfWeek.Thursday && sw.IsThursday == true) ||
+                        (dayOfWeek == DayOfWeek.Friday && sw.IsFriday == true) ||
+                        (dayOfWeek == DayOfWeek.Saturday && sw.IsSaturday == true) ||
+                        (dayOfWeek == DayOfWeek.Sunday && sw.IsSunday == true))
+                        .ToList();
+                    var shiftWork = shiftWorksForDay.FirstOrDefault();
+
+                    //   có ca làm việc thì tự động chấm công 
+                    if (shiftWorksForDay.Any())
+                    {
+                        if (shiftWork != null)
+                        {
+                            if(leaveApplication.SalaryPercentage > 0 )
+                            {
+                                BackgroundJob.Enqueue<JobHangFireService>(j => j.CreateTimeSheet(employeeId, date, shiftWork.Id, shiftWork.ShiftCatalog.WorkingHours.Value, TimeKeepingLeaveStatus.LeaveNotPermissionWithSalary));
+                            }
+                            else
+                            {
+                                BackgroundJob.Enqueue<JobHangFireService>(j => j.CreateTimeSheet(employeeId, date, shiftWork.Id, shiftWork.ShiftCatalog.WorkingHours.Value, TimeKeepingLeaveStatus.LeaveNotPermission));
+                            }
+
+                        }
+
+                    }
+                }
+            }
+            return ApiResult<bool>.Success("Cập nhật trạng thái đơn xin nghỉ thành công", true);
+        }
+
+
+        /// <summary>
+        /// HRM- Là HR tôi muốn duyệt nhiều đơn xin nghỉ
+        /// </summary>
+        /// <param name="id"></param>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        [HttpPut("update-status-multiple")]
+        public async Task<ApiResult<bool>> UpdateStatusMultiple([FromBody] UpdateStatusLeaveApplicationMultipleRequest request)
+        {
+            foreach (var item in request.UpdateStatusLeaveApplicationRequests)
+            {
+                if (item.Status == LeaveApplicationStatus.Rejected && item.UpdateDaysRemainingTypeOfLeaveEmployeeRequest != null)
+                {
+                    await _unitOfWork.TypeOfLeaveEmployee.UpdateDaysRemaining(
+                        -item.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.DaysRemaining,
+                        item.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.EmployeeId,
+                        item.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.TypeOfLeaveId,
+                        item.UpdateDaysRemainingTypeOfLeaveEmployeeRequest.Year);
+                }
+                await _unitOfWork.LeaveApplications.UpdateStatus(item.Id, item.Status, item.ApproverNote);
+            }
+
+            return ApiResult<bool>.Success("Cập nhật trạng thái các đơn xin nghỉ thành công", true);
+        }
+
+        [HttpDelete("delete")]
+        public async Task<ApiResult<bool>> Delete(int id)
+        {
+            await _unitOfWork.LeaveApplications.DeleteSoft(id);
+            return ApiResult<bool>.Success("Xóa đơn xin nghỉ thành công", true);
+        }
+
+
+    }
+}

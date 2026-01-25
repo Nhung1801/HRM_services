@@ -1,0 +1,14 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace HRM_BE.Core.Models.Tag
+{
+    public class UpdateTagWorkRequest
+    {
+        public int? WorkId { get; set; }
+
+    }
+}

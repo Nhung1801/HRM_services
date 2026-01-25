@@ -1,0 +1,26 @@
+﻿using HRM_BE.Core.Data.Payroll_Timekeeping.LeaveRegulation;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace HRM_BE.Core.Models.Payroll_Timekeeping.LeaveRegulation
+{
+    public class CreateHolidayRequest
+    {
+        public int? OrganizationId { get; set; } // tổ chức công ty
+
+        public string? Name { get; set; }//Tên 
+
+        public bool? IsACompensatoryDayOff { get; set; } = false;// Là ngày nghỉ bù
+
+        public DateTime FromDate { get; set; }// Ngày bắt đầu
+
+        public DateTime ToDate { get; set; } //Ngày kết thúc
+
+        public string? Note { get; set; } //Ghi chú
+
+        public ApplyObject ApplyObject { get; set; } // ĐỐi tượng áp dụng
+    }
+}
