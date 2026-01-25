@@ -152,6 +152,13 @@ namespace HRM_BE.Data.Repositories
                         : null,
                     CompanyId = p.CompanyId,
                     //CompanyFullName = p.Company != null ? p.Company.FullName : null,
+                    Organization = p.Organization != null
+                        ? new GetOrganizationForEmployeeDto
+                        {
+                            Id = p.Organization.Id,
+                            OrganizationName = p.Organization.OrganizationName
+                        }
+                        : null,
                     OrganizationLeaders = p.OrganizationLeaders
                         .Select(o => new GetEmployeeOrganizationDto
                         {
