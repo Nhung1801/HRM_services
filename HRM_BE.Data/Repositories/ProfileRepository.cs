@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using HRM_BE.Core.Data.Company;
 using HRM_BE.Core.Data.Staff;
 using HRM_BE.Core.Extension;
@@ -102,6 +102,71 @@ namespace HRM_BE.Data.Repositories
             var result = new PagingResult<EmployeeDto>(data, pageIndex, pageSize, sortBy, orderBy, totalRecords);
 
             return result;
+        }
+
+        public async Task<List<EmployeeDto>> GetAll(WorkingStatus? workingStatus, int? employeeId, int? companyId, string? sortBy, string? orderBy)
+        {
+            try
+            {
+                var query = _dbContext.Employees.AsQueryable();
+
+                // Lọc theo trạng thái lao động
+                if (workingStatus.HasValue)
+                {
+                    query = query.Where(e => e.WorkingStatus == workingStatus.Value);
+                }
+
+                // Lọc theo employeeId
+                if (employeeId.HasValue)
+                {
+                    query = query.Where(e => e.Id == employeeId.Value);
+                }
+
+                // Lọc theo companyId
+                if (companyId.HasValue)
+                {
+                    query = query.Where(e => e.CompanyId == companyId.Value);
+                }
+
+                // Áp dụng sắp xếp
+                query = query.ApplySorting(sortBy, orderBy);
+
+                // Lấy dữ liệu và chuyển sang DTO
+                var data = await query.Select(p => new EmployeeDto
+                {
+                    Id = p.Id,
+                    EmployeeCode = p.EmployeeCode,
+                    FirstName = p.FirstName,
+                    LastName = p.LastName,
+                    Sex = p.Sex,
+                    DateOfBirth = p.DateOfBirth,
+                    PhoneNumber = p.PhoneNumber,
+                    CompanyEmail = p.CompanyEmail,
+                    WorkingStatus = p.WorkingStatus,
+                    AvatarUrl = p.AvatarUrl,
+                    StaffTitle = p.StaffTitle != null
+                        ? new StaffTitleDto { StaffTitleName = p.StaffTitle.StaffTitleName }
+                        : null,
+                    StaffPosition = p.StaffPosition != null
+                        ? new StaffPositionDto { PositionName = p.StaffPosition.PositionName }
+                        : null,
+                    CompanyId = p.CompanyId,
+                    //CompanyFullName = p.Company != null ? p.Company.FullName : null,
+                    OrganizationLeaders = p.OrganizationLeaders
+                        .Select(o => new GetEmployeeOrganizationDto
+                        {
+                            OrganizationId = o.OrganizationId,
+                            OrganizationName = o.Organization.OrganizationName
+                        }).ToList()
+
+                }).ToListAsync();
+
+                return data;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception(ex.Message);
+            }
         }
     }
 }

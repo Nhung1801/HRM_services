@@ -356,269 +356,275 @@ namespace HRM_BE.Data.Repositories
             return result;
         }
 
-        public async Task<PagingResult<GetOrganizationDto>> Paging(string? keyWord, string? sortBy, string? orderBy, int pageIndex = 1, int pageSize = 10) {
-            try {
-                var baseQuery = _dbContext.Organizations
-                    .AsNoTracking()
-                    .Where(o => o.OrganizatioParentId == null);
+        public async Task<PagingResult<GetOrganizationDto>> Paging(
+    string? keyWord,
+    string? sortBy,
+    string? orderBy,
+    int pageIndex = 1,
+    int pageSize = 10)
+        {
+            // =====================================================
+            // 1. LOAD FULL DATA (KHÔNG SEARCH – KHÔNG PAGING)
+            // =====================================================
+            var organizations = await _dbContext.Organizations
+                .AsNoTracking()
+                .Include(o => o.Employees)
+                .Include(o => o.OrganizationType)
+                .Include(o => o.OrganizationLeaders)
+                    .ThenInclude(ol => ol.Employee)
+                .ToListAsync();
 
-                // Áp dụng tìm kiếm theo keyword
-                if (!string.IsNullOrWhiteSpace(keyWord))
-                {
-                    baseQuery = baseQuery.Where(o =>
-                        o.OrganizationName.Contains(keyWord) ||
-                        o.OrganizationCode.Contains(keyWord) ||
-                        o.Abbreviation.Contains(keyWord));
-                }
-
-                // Áp dụng sắp xếp
-                baseQuery = baseQuery.ApplySorting(sortBy, orderBy);
-
-                // Tính tổng số bản ghi
-                int total = await baseQuery.CountAsync();
-
-                // Áp dụng phân trang
-                var pageQuery = baseQuery.ApplyPaging(pageIndex, pageSize);
-
-                // Lấy danh sách root organization IDs trong page
-                var rootOrgIds = await pageQuery.Select(o => o.Id).ToListAsync();
-
-                if (!rootOrgIds.Any())
-                {
-                    return new PagingResult<GetOrganizationDto>(
-                        new List<GetOrganizationDto>(), 
-                        pageIndex, pageSize, sortBy, orderBy, total);
-                }
-
-                // Sử dụng CTE để lấy tất cả children và tính tổng nhân viên đệ quy
-                var orgIdsParam = string.Join(",", rootOrgIds);
-                var sql = $@"
-                    WITH OrgHierarchy AS (
-                        -- Anchor: Lấy root organizations trong page
-                        SELECT 
-                            o.Id,
-                            o.OrganizationCode,
-                            o.OrganizationName,
-                            o.Abbreviation,
-                            o.CompanyId,
-                            o.Rank,
-                            o.OrganizationTypeId,
-                            o.OrganizatioParentId,
-                            o.OrganizationStatus,
-                            o.Id as RootId,
-                            0 as Level
-                        FROM Organizations o
-                        WHERE o.Id IN ({orgIdsParam})
-                        
-                        UNION ALL
-                        
-                        -- Recursive: Lấy tất cả children đệ quy
-                        SELECT 
-                            o.Id,
-                            o.OrganizationCode,
-                            o.OrganizationName,
-                            o.Abbreviation,
-                            o.CompanyId,
-                            o.Rank,
-                            o.OrganizationTypeId,
-                            o.OrganizatioParentId,
-                            o.OrganizationStatus,
-                            oh.RootId,
-                            oh.Level + 1
-                        FROM Organizations o
-                        INNER JOIN OrgHierarchy oh ON o.OrganizatioParentId = oh.Id
-                    ),
-                    OrgWithEmployeeCount AS (
-                        -- Tính số nhân viên trực tiếp cho từng organization
-                        SELECT 
-                            oh.Id,
-                            oh.OrganizationCode,
-                            oh.OrganizationName,
-                            oh.Abbreviation,
-                            oh.CompanyId,
-                            oh.Rank,
-                            oh.OrganizationTypeId,
-                            oh.OrganizatioParentId,
-                            oh.OrganizationStatus,
-                            ot.Id as OrgTypeId,
-                            ot.CompanyId as OrgTypeCompanyId,
-                            ot.OrganizationTypeName,
-                            oh.RootId,
-                            oh.Level,
-                            COUNT(DISTINCT e.Id) as DirectEmployeeCount
-                        FROM OrgHierarchy oh
-                        LEFT JOIN OrganizationTypes ot ON oh.OrganizationTypeId = ot.Id
-                        LEFT JOIN Employees e ON e.OrganizationId = oh.Id
-                        GROUP BY oh.Id, oh.OrganizationCode, oh.OrganizationName, oh.Abbreviation, 
-                                 oh.CompanyId, oh.Rank, oh.OrganizationTypeId, oh.OrganizatioParentId, 
-                                 oh.OrganizationStatus, ot.Id, ot.CompanyId, 
-                                 ot.OrganizationTypeName, oh.RootId, oh.Level
-                    ),
-                    OrgDescendants AS (
-                        -- CTE đệ quy để tìm tất cả descendants của mỗi org (bao gồm chính nó)
-                        SELECT 
-                            o.Id as OrgId,
-                            o.Id as DescendantId,
-                            o.RootId
-                        FROM OrgWithEmployeeCount o
-                        WHERE o.RootId IN ({orgIdsParam})
-                        
-                        UNION ALL
-                        
-                        SELECT 
-                            od.OrgId,
-                            oh.Id as DescendantId,
-                            od.RootId
-                        FROM OrgDescendants od
-                        INNER JOIN OrgHierarchy oh ON oh.OrganizatioParentId = od.DescendantId
-                        WHERE oh.RootId = od.RootId
-                    ),
-                    OrgWithTotalEmployees AS (
-                        -- Tính tổng nhân viên đệ quy: tổng của org + tất cả descendants
-                        SELECT 
-                            o.Id,
-                            o.RootId,
-                            o.Level,
-                            ISNULL(SUM(oe.DirectEmployeeCount), 0) as TotalEmployees
-                        FROM OrgWithEmployeeCount o
-                        LEFT JOIN OrgDescendants od ON od.OrgId = o.Id
-                        LEFT JOIN OrgWithEmployeeCount oe ON oe.Id = od.DescendantId
-                        WHERE o.RootId IN ({orgIdsParam})
-                        GROUP BY o.Id, o.RootId, o.Level
-                    )
-                    SELECT 
-                        o.Id,
-                        o.OrganizationCode,
-                        o.OrganizationName,
-                        o.Abbreviation,
-                        o.CompanyId,
-                        o.Rank,
-                        o.OrganizationTypeId,
-                        o.OrganizatioParentId,
-                        o.OrganizationStatus,
-                        o.OrgTypeId as OrganizationType_Id,
-                        o.OrgTypeCompanyId as OrganizationType_CompanyId,
-                        o.OrganizationTypeName as OrganizationType_OrganizationTypeName,
-                        o.RootId,
-                        o.Level,
-                        ISNULL(te.TotalEmployees, o.DirectEmployeeCount) as TotalEmployees
-                    FROM OrgWithEmployeeCount o
-                    LEFT JOIN OrgWithTotalEmployees te ON o.Id = te.Id
-                    WHERE o.RootId IN ({orgIdsParam})
-                    ORDER BY o.RootId, o.Level";
-
-                // Execute CTE query và map vào DTO
-                var orgData = new List<OrgHierarchyResult>();
-                using (var command = _dbContext.Database.GetDbConnection().CreateCommand())
-                {
-                    command.CommandText = sql;
-                    command.CommandType = CommandType.Text;
-                    await _dbContext.Database.OpenConnectionAsync();
-                    using (var reader = await command.ExecuteReaderAsync())
+            // =====================================================
+            // 2. MAP → NODE PHẲNG
+            // =====================================================
+            var nodes = organizations.Select(o => new OrgNode
+            {
+                Id = o.Id,
+                ParentId = o.OrganizatioParentId,
+                OrganizationCode = o.OrganizationCode,
+                OrganizationName = o.OrganizationName,
+                Abbreviation = o.Abbreviation,
+                DirectEmployees = o.Employees.Count,
+                OrganizationType = o.OrganizationType,
+                Leaders = o.OrganizationLeaders
+                    .Where(x => x.OrganizationLeaderType == OrganizationLeaderType.Leader)
+                    .Select(x => new OrganizationLeaderDto
                     {
-                        while (await reader.ReadAsync())
+                        OrganizationLeaderType = x.OrganizationLeaderType,
+                        Employee = new GetOrganizationLeaderDto
                         {
-                            orgData.Add(new OrgHierarchyResult
-                            {
-                                Id = reader.GetInt32("Id"),
-                                OrganizationCode = reader.GetString("OrganizationCode"),
-                                OrganizationName = reader.GetString("OrganizationName"),
-                                Abbreviation = reader.IsDBNull("Abbreviation") ? null : reader.GetString("Abbreviation"),
-                                CompanyId = reader.IsDBNull("CompanyId") ? null : reader.GetInt32("CompanyId"),
-                                Rank = reader.IsDBNull("Rank") ? null : reader.GetInt32("Rank"),
-                                OrganizationTypeId = reader.IsDBNull("OrganizationTypeId") ? null : reader.GetInt32("OrganizationTypeId"),
-                                OrganizatioParentId = reader.IsDBNull("OrganizatioParentId") ? null : reader.GetInt32("OrganizatioParentId"),
-                                OrganizationStatus = reader.IsDBNull("OrganizationStatus") ? null : reader.GetBoolean("OrganizationStatus"),
-                                OrganizationType_Id = reader.IsDBNull("OrganizationType_Id") ? null : reader.GetInt32("OrganizationType_Id"),
-                                OrganizationType_CompanyId = reader.IsDBNull("OrganizationType_CompanyId") ? null : reader.GetInt32("OrganizationType_CompanyId"),
-                                OrganizationType_OrganizationTypeName = reader.IsDBNull("OrganizationType_OrganizationTypeName") ? null : reader.GetString("OrganizationType_OrganizationTypeName"),
-                                RootId = reader.GetInt32("RootId"),
-                                Level = reader.GetInt32("Level"),
-                                TotalEmployees = reader.GetInt32("TotalEmployees")
-                            });
-                        }
-                    }
-                    await _dbContext.Database.CloseConnectionAsync();
-                }
-
-                // Lấy leaders cho tất cả organizations (bao gồm cả children)
-                var allOrgIds = orgData.Select(x => x.Id).Distinct().ToList();
-                var leaderRows = await _dbContext.OrganizationLeaders
-                    .AsNoTracking()
-                    .Where(ol =>
-                        allOrgIds.Contains(ol.OrganizationId) &&
-                        ol.OrganizationLeaderType == OrganizationLeaderType.Leader)
-                    .Select(ol => new
-                    {
-                        ol.OrganizationId,
-                        Leader = new OrganizationLeaderDto
-                        {
-                            OrganizationLeaderType = ol.OrganizationLeaderType,
-                            Employee = new GetOrganizationLeaderDto
-                            {
-                                Id = ol.Employee.Id,
-                                LastName = ol.Employee.LastName,
-                                FirstName = ol.Employee.FirstName
-                            }
+                            Id = x.Employee.Id,
+                            FirstName = x.Employee.FirstName,
+                            LastName = x.Employee.LastName
                         }
                     })
-                    .ToListAsync();
+                    .ToList()
+            }).ToList();
 
-                var leaderMap = leaderRows
-                    .GroupBy(x => x.OrganizationId)
-                    .ToDictionary(g => g.Key, g => g.Select(x => x.Leader).ToList());
+            // =====================================================
+            // 3. BUILD TREE
+            // =====================================================
+            var nodeMap = nodes.ToDictionary(x => x.Id);
 
-                // Xây dựng cây tổ chức từ kết quả CTE
-                var orgMap = orgData
-                    .GroupBy(x => x.RootId)
-                    .ToDictionary(g => g.Key, g => g.ToList());
-
-                var items = new List<GetOrganizationDto>();
-
-                foreach (var rootId in rootOrgIds)
+            foreach (var node in nodes)
+            {
+                if (node.ParentId.HasValue && nodeMap.ContainsKey(node.ParentId.Value))
                 {
-                    if (!orgMap.ContainsKey(rootId)) continue;
+                    nodeMap[node.ParentId.Value].Children.Add(node);
+                }
+            }
 
-                    var rootData = orgMap[rootId].FirstOrDefault(x => x.Level == 0);
-                    if (rootData == null) continue;
+            var roots = nodes.Where(x => x.ParentId == null).ToList();
 
-                    var rootDto = MapToGetOrganizationDto(rootData, leaderMap);
-                    rootDto.OrganizationChildren = BuildOrganizationChildren(
-                        rootId, 
-                        orgMap[rootId], 
-                        leaderMap, 
-                        0);
+            // =====================================================
+            // 4. SEARCH LOGIC (THEO YÊU CẦU MỚI)
+            // =====================================================
+            HashSet<int> matchedIds = new();
+            Dictionary<int, string> nodeTypes = new(); // "Root", "Unit", "Department"
 
-                    items.Add(rootDto);
+            if (!string.IsNullOrWhiteSpace(keyWord))
+            {
+                var matched = nodes
+                    .Where(x =>
+                        x.OrganizationName.Contains(keyWord, StringComparison.OrdinalIgnoreCase)
+                        || x.OrganizationCode.Contains(keyWord, StringComparison.OrdinalIgnoreCase)
+                        || (x.Abbreviation != null &&
+                            x.Abbreviation.Contains(keyWord, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+
+                foreach (var m in matched)
+                {
+                    matchedIds.Add(m.Id);
+
+                    // Xác định loại node
+                    if (m.ParentId == null)
+                    {
+                        nodeTypes[m.Id] = "Root";
+                    }
+                    else if (m.OrganizationType?.OrganizationTypeName == "Unit")
+                    {
+                        nodeTypes[m.Id] = "Unit";
+                    }
+                    else
+                    {
+                        nodeTypes[m.Id] = "Department";
+                    }
+                }
+            }
+
+            List<OrgNode> filteredRoots;
+
+            if (matchedIds.Any())
+            {
+                filteredRoots = new List<OrgNode>();
+
+                foreach (var root in roots)
+                {
+                    var clonedRoot = CloneNode(root);
+                    if (FilterTree(clonedRoot, matchedIds, nodeTypes))
+                    {
+                        filteredRoots.Add(clonedRoot);
+                    }
+                }
+            }
+            else
+            {
+                filteredRoots = roots;
+            }
+
+            // =====================================================
+            // 5. SORT + PAGING ROOT
+            // =====================================================
+            int totalRecords = filteredRoots.Count;
+
+            if (!string.IsNullOrWhiteSpace(sortBy))
+            {
+                filteredRoots = orderBy?.ToLower() == "desc"
+                    ? filteredRoots.OrderByDescending(x => GetPropertyValue(x, sortBy)).ToList()
+                    : filteredRoots.OrderBy(x => GetPropertyValue(x, sortBy)).ToList();
+            }
+
+            var pagedRoots = filteredRoots
+                .Skip((pageIndex - 1) * pageSize)
+                .Take(pageSize)
+                .ToList();
+
+            // =====================================================
+            // 6. TOTAL EMPLOYEES (ĐỆ QUY ĐÚNG)
+            // =====================================================
+            foreach (var root in pagedRoots)
+            {
+                CalculateTotalEmployees(root);
+            }
+
+            // =====================================================
+            // 7. MAP → DTO
+            // =====================================================
+            var items = pagedRoots.Select(MapToDto).ToList();
+
+            return new PagingResult<GetOrganizationDto>(
+                items,
+                pageIndex,
+                pageSize,
+                sortBy,
+                orderBy,
+                totalRecords
+            );
+        }
+
+        // =====================================================
+        // HELPER METHODS
+        // =====================================================
+
+        private OrgNode CloneNode(OrgNode source)
+        {
+            return new OrgNode
+            {
+                Id = source.Id,
+                ParentId = source.ParentId,
+                OrganizationCode = source.OrganizationCode,
+                OrganizationName = source.OrganizationName,
+                Abbreviation = source.Abbreviation,
+                DirectEmployees = source.DirectEmployees,
+                TotalEmployees = source.TotalEmployees,
+                OrganizationType = source.OrganizationType,
+                Leaders = source.Leaders,
+                Children = source.Children.Select(CloneNode).ToList()
+            };
+        }
+
+        private bool FilterTree(
+            OrgNode node,
+            HashSet<int> matchedIds,
+            Dictionary<int, string> nodeTypes)
+        {
+            bool currentNodeMatches = matchedIds.Contains(node.Id);
+
+            // ===============================
+            // CASE 1: NODE MATCH
+            // ===============================
+            if (currentNodeMatches)
+            {
+                string matchType = nodeTypes[node.Id];
+
+                // ROOT hoặc UNIT match → GIỮ NGUYÊN TOÀN BỘ SUBTREE
+                if (matchType == "Root" || matchType == "Unit")
+                {
+                    return true; // KHÔNG filter children nữa
                 }
 
-                var result = new PagingResult<GetOrganizationDto>(items, pageIndex, pageSize, sortBy, orderBy, total);
-                return result;
+                // DEPARTMENT match → chỉ giữ node này
+                if (matchType == "Department")
+                {
+                    node.Children.Clear();
+                    return true;
+                }
             }
-            catch (Exception ex) {
-                throw new Exception(ex.Message);
+
+            // ===============================
+            // CASE 2: NODE KHÔNG MATCH
+            // ===============================
+            var keptChildren = new List<OrgNode>();
+
+            foreach (var child in node.Children)
+            {
+                if (FilterTree(child, matchedIds, nodeTypes))
+                {
+                    keptChildren.Add(child);
+                }
             }
+
+            if (keptChildren.Any())
+            {
+                node.Children = keptChildren; // giữ path
+                return true;
+            }
+
+            return false;
         }
 
-        // Helper class để map kết quả từ CTE
-        private class OrgHierarchyResult
+
+        private int CalculateTotalEmployees(OrgNode node)
         {
-            public int Id { get; set; }
-            public string OrganizationCode { get; set; }
-            public string OrganizationName { get; set; }
-            public string? Abbreviation { get; set; }
-            public int? CompanyId { get; set; }
-            public int? Rank { get; set; }
-            public int? OrganizationTypeId { get; set; }
-            public int? OrganizatioParentId { get; set; }
-            public bool? OrganizationStatus { get; set; }
-            public int? OrganizationType_Id { get; set; }
-            public int? OrganizationType_CompanyId { get; set; }
-            public string? OrganizationType_OrganizationTypeName { get; set; }
-            public int RootId { get; set; }
-            public int Level { get; set; }
-            public int TotalEmployees { get; set; }
+            int total = node.DirectEmployees;
+            foreach (var child in node.Children)
+            {
+                total += CalculateTotalEmployees(child);
+            }
+            node.TotalEmployees = total;
+            return total;
         }
+
+        private GetOrganizationDto MapToDto(OrgNode node)
+        {
+            return new GetOrganizationDto
+            {
+                Id = node.Id,
+                OrganizationCode = node.OrganizationCode,
+                OrganizationName = node.OrganizationName,
+                Abbreviation = node.Abbreviation,
+                TotalEmployees = node.TotalEmployees,
+                OrganizationType = node.OrganizationType == null
+                    ? null
+                    : new OrganizationTypeDto
+                    {
+                        Id = node.OrganizationType.Id,
+                        OrganizationTypeName = node.OrganizationType.OrganizationTypeName
+                    },
+                OrganizationLeaders = node.Leaders,
+                OrganizationChildren = node.Children.Select(MapToDto).ToList()
+            };
+        }
+
+        private object GetPropertyValue(OrgNode node, string propertyName)
+        {
+            var property = typeof(OrgNode).GetProperty(propertyName);
+            return property?.GetValue(node) ?? string.Empty;
+        }
+
+
+
+
 
         // Helper method để map OrgHierarchyResult sang GetOrganizationDto
         private GetOrganizationDto MapToGetOrganizationDto(

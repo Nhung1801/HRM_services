@@ -36,5 +36,11 @@ namespace HRM_BE.Api.Controllers.Profile
             var result = await _unitOfWork.Profiles.Paging(request.workingStatus, request.employeeId, request.organizationId, request.SortBy, request.OrderBy, request.PageIndex, request.PageSize);
             return result;
         }
+        //[HttpGet("all")]
+        //public async Task<List<EmployeeDto>> GetAll([FromQuery] GetProfilePagingRequest request)
+        //{
+        //    var result = await _unitOfWork.Profiles.GetAll(request.workingStatus, request.employeeId, request.SortBy, request.OrderBy);
+        //    return result;
+        //}
     }
 }
