@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using HRM_BE.Api.Services.Interfaces;
 using HRM_BE.Core.Data.Staff;
 using HRM_BE.Core.ISeedWorks;
@@ -33,7 +33,7 @@ namespace HRM_BE.Api.Controllers.Profile
         [HttpGet("paging")]
         public async Task<PagingResult<EmployeeDto>> Paging([FromQuery] GetProfilePagingRequest request)
         {
-            var result = await _unitOfWork.Profiles.Paging(request.workingStatus, request.employeeId, request.organizationId, request.SortBy, request.OrderBy, request.PageIndex, request.PageSize);
+            var result = await _unitOfWork.Profiles.Paging(request.workingStatus, request.employeeId, request.organizationId, request.keyWord, request.SortBy, request.OrderBy, request.PageIndex, request.PageSize);
             return result;
         }
         [HttpGet("all")]

@@ -26,9 +26,9 @@ namespace HRM_BE.Data.Repositories
             _mapper = mapper;
         }
 
-        public async Task<PagingResult<EmployeeDto>> Paging(WorkingStatus? workingStatus, int? employeeId, int? organizationId, string? sortBy, string? orderBy, int pageIndex = 1, int pageSize = 10)
+        public async Task<PagingResult<EmployeeDto>> Paging(WorkingStatus? workingStatus, int? employeeId, int? organizationId, string? keyWord, string? sortBy, string? orderBy, int pageIndex = 1, int pageSize = 10)
         {
-            var query = _dbContext.Employees.AsQueryable();
+            var query = _dbContext.Employees.Where(e => e.IsDeleted == false).AsQueryable();
 
             // Lọc theo trạng thái lao động
             if (workingStatus.HasValue)
@@ -36,15 +36,39 @@ namespace HRM_BE.Data.Repositories
                 query = query.Where(e => e.WorkingStatus == workingStatus.Value);
             }
 
-            // Tìm kiếm theo tên nhân viên
-            //if (!string.IsNullOrEmpty(nameEmployee))
-            //{
-            //    string normalizedSearchTerm = nameEmployee.ToLower().Trim();
-            //    query = query.Where(e => EF.Functions.Like(
-            //        (e.LastName + " " + e.FirstName).ToLower().Trim(),
-            //        "%" + normalizedSearchTerm + "%"
-            //    ));
-            //}
+            // Tìm kiếm theo keyword (tên, số điện thoại, mã nhân viên)
+            if (!string.IsNullOrEmpty(keyWord))
+            {
+                keyWord = keyWord.Trim();
+                
+                // Tách từ khóa thành các từ riêng biệt và loại bỏ khoảng trắng thừa
+                var searchTerms = keyWord.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(term => term.Trim())
+                    .Where(term => !string.IsNullOrEmpty(term))
+                    .ToList();
+
+                if (searchTerms.Any())
+                {
+                    // Tạo điều kiện tìm kiếm: (tên chứa tất cả các từ) OR (số điện thoại chứa toàn bộ từ khóa) OR (mã nhân viên chứa toàn bộ từ khóa)
+                    var firstTerm = searchTerms[0];
+                    query = query.Where(e =>
+                        ((e.LastName ?? "").Trim() + " " + (e.FirstName ?? "").Trim()).Contains(firstTerm) ||
+                        ((e.FirstName ?? "").Trim() + " " + (e.LastName ?? "").Trim()).Contains(firstTerm) ||
+                        (!string.IsNullOrEmpty(e.PhoneNumber) && e.PhoneNumber.Contains(keyWord)) ||
+                        (!string.IsNullOrEmpty(e.EmployeeCode) && e.EmployeeCode.Contains(keyWord)));
+                    
+                    // Áp dụng điều kiện cho các từ còn lại (chỉ kiểm tra tên)
+                    for (int i = 1; i < searchTerms.Count; i++)
+                    {
+                        var term = searchTerms[i];
+                        query = query.Where(e =>
+                            ((e.LastName ?? "").Trim() + " " + (e.FirstName ?? "").Trim()).Contains(term) ||
+                            ((e.FirstName ?? "").Trim() + " " + (e.LastName ?? "").Trim()).Contains(term) ||
+                            (!string.IsNullOrEmpty(e.PhoneNumber) && e.PhoneNumber.Contains(keyWord)) ||
+                            (!string.IsNullOrEmpty(e.EmployeeCode) && e.EmployeeCode.Contains(keyWord)));
+                    }
+                }
+            }
 
             // Lọc theo employeeId
             if (employeeId.HasValue)
@@ -52,10 +76,12 @@ namespace HRM_BE.Data.Repositories
                 query = query.Where(e => e.Id == employeeId.Value);
             }    
 
-            // Lọc theo đơn vị
+            // Lọc theo đơn vị (bao gồm cả các đơn vị con)
             if (organizationId.HasValue)
             {
-                query = query.Where(e => e.OrganizationLeaders.Where(or => or.OrganizationId == organizationId).Any());
+                var organizationDescendantIds = await GetAllChildOrganizationIds(organizationId.Value);
+                organizationDescendantIds.Add(organizationId.Value);
+                query = query.Where(e => e.OrganizationLeaders.Where(or => organizationDescendantIds.Contains(or.OrganizationId)).Any());
             }
 
             // Áp dụng sắp xếp
@@ -104,11 +130,11 @@ namespace HRM_BE.Data.Repositories
             return result;
         }
 
-        public async Task<List<EmployeeDto>> GetAll(WorkingStatus? workingStatus, int? employeeId, int? companyId, string? sortBy, string? orderBy)
+        public async Task<List<EmployeeDto>> GetAll(WorkingStatus? workingStatus, int? employeeId, int? organizationId, string? sortBy, string? orderBy)
         {
             try
             {
-                var query = _dbContext.Employees.AsQueryable();
+                var query = _dbContext.Employees.Where(e => e.IsDeleted == false).AsQueryable();
 
                 // Lọc theo trạng thái lao động
                 if (workingStatus.HasValue)
@@ -122,10 +148,12 @@ namespace HRM_BE.Data.Repositories
                     query = query.Where(e => e.Id == employeeId.Value);
                 }
 
-                // Lọc theo companyId
-                if (companyId.HasValue)
+                // Lọc theo đơn vị (bao gồm cả các đơn vị con)
+                if (organizationId.HasValue)
                 {
-                    query = query.Where(e => e.CompanyId == companyId.Value);
+                    var organizationDescendantIds = await GetAllChildOrganizationIds(organizationId.Value);
+                    organizationDescendantIds.Add(organizationId.Value);
+                    query = query.Where(e => e.OrganizationLeaders.Where(or => organizationDescendantIds.Contains(or.OrganizationId)).Any());
                 }
 
                 // Áp dụng sắp xếp
@@ -173,6 +201,29 @@ namespace HRM_BE.Data.Repositories
             catch (Exception ex)
             {
                 throw new Exception(ex.Message);
+            }
+        }
+
+        public async Task<List<int>> GetAllChildOrganizationIds(int parentId)
+        {
+            // Lấy tất cả các tổ chức
+            var allOrganizations = await _dbContext.Organizations.AsNoTracking().ToListAsync();
+
+            // Gọi hàm đệ quy để tìm tất cả các Id con
+            var result = new List<int>();
+            GetChildIdsRecursive(parentId, allOrganizations, result);
+            return result;
+        }
+
+        private void GetChildIdsRecursive(int parentId, List<Organization> allOrganizations, List<int> result)
+        {
+            // Lấy tất cả các con trực tiếp của parentId
+            var children = allOrganizations.Where(o => o.OrganizatioParentId == parentId).ToList();
+
+            foreach (var child in children)
+            {
+                result.Add(child.Id); // Thêm Id của con vào danh sách kết quả
+                GetChildIdsRecursive(child.Id, allOrganizations, result); // Gọi đệ quy cho các con
             }
         }
     }

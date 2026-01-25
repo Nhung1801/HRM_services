@@ -1,4 +1,4 @@
-﻿using HRM_BE.Core.Data.Staff;
+using HRM_BE.Core.Data.Staff;
 using HRM_BE.Core.Models.Common;
 using System;
 using System.Collections.Generic;
@@ -13,5 +13,6 @@ namespace HRM_BE.Core.Models.Profile
         public int? employeeId { get; set; }
         public int? organizationId { get; set; }
         public WorkingStatus? workingStatus { get; set; }
+        public string? keyWord { get; set; }
     }
 }

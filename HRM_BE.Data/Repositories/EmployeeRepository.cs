@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using AutoMapper.Configuration.Annotations;
 using AutoMapper.QueryableExtensions;
 using HRM_BE.Core.Data.Company;
@@ -103,15 +103,41 @@ namespace HRM_BE.Data.Repositories
                 //    .Where(o => o.OrganizationLeaderType == OrganizationLeaderType.Member))
                 //.Include(e => e.Contracts.Where( c => c.ExpiredStatus == false))
                 .AsNoTracking();
+            
             if (!string.IsNullOrEmpty(keyWord))
             {
-
                 keyWord = keyWord.Trim(); // Loại bỏ khoảng trắng thừa đầu và cuối từ khóa
-                query = query.Where(c => (c.LastName.Trim() + " " + c.FirstName.Trim()).Contains(keyWord) ||
-                                         (c.FirstName.Trim() + " " + c.LastName.Trim()).Contains(keyWord) ||
-                                         c.PhoneNumber.Contains(keyWord));
-            }
+                
+                // Tách từ khóa thành các từ riêng biệt và loại bỏ khoảng trắng thừa
+                var searchTerms = keyWord.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(term => term.Trim())
+                    .Where(term => !string.IsNullOrEmpty(term))
+                    .ToList();
 
+                if (searchTerms.Any())
+                {
+                    // Tạo điều kiện tìm kiếm: (tên chứa tất cả các từ) OR (số điện thoại chứa toàn bộ từ khóa)
+                    // Áp dụng từng điều kiện cho tên để tạo AND logic (tất cả các từ phải xuất hiện)
+                    // Sau đó thêm OR với điều kiện số điện thoại
+                    
+                    // Bước 1: Áp dụng điều kiện cho từ đầu tiên kèm theo điều kiện số điện thoại
+                    var firstTerm = searchTerms[0];
+                    query = query.Where(c =>
+                        ((c.LastName ?? "").Trim() + " " + (c.FirstName ?? "").Trim()).Contains(firstTerm) ||
+                        ((c.FirstName ?? "").Trim() + " " + (c.LastName ?? "").Trim()).Contains(firstTerm) ||
+                        (!string.IsNullOrEmpty(c.PhoneNumber) && c.PhoneNumber.Contains(keyWord)));
+                    
+                    // Bước 2: Áp dụng điều kiện cho các từ còn lại (chỉ kiểm tra tên, không kiểm tra số điện thoại nữa)
+                    for (int i = 1; i < searchTerms.Count; i++)
+                    {
+                        var term = searchTerms[i];
+                        query = query.Where(c =>
+                            ((c.LastName ?? "").Trim() + " " + (c.FirstName ?? "").Trim()).Contains(term) ||
+                            ((c.FirstName ?? "").Trim() + " " + (c.LastName ?? "").Trim()).Contains(term) ||
+                            (!string.IsNullOrEmpty(c.PhoneNumber) && c.PhoneNumber.Contains(keyWord)));
+                    }
+                }
+            }
 
             if (organizationId.HasValue)
             {
@@ -156,10 +182,8 @@ namespace HRM_BE.Data.Repositories
             int total = await query.CountAsync();
             // Áp dụng phân trang
             query = query.ApplyPaging(pageIndex, pageSize);
-            var test = await query.ToListAsync();
 
             var data = await _mapper.ProjectTo<EmployeeDto>(query).ToListAsync();
-
 
             var result = new PagingResult<EmployeeDto>(data, pageIndex, pageSize, sortBy, orderBy, total);
 
