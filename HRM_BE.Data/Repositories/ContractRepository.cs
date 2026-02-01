@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using HRM_BE.Core.Data.Profile;
 using HRM_BE.Core.Data.Staff;
 using HRM_BE.Core.Extension;
@@ -31,6 +31,31 @@ namespace HRM_BE.Data.Repositories
         public ContractRepository( HrmContext context, IMapper mapper, IHttpContextAccessor httpContextAccessor) : base(context, httpContextAccessor)
         {
             _mapper = mapper;
+        }
+
+        public async Task<List<ContractDTO>> GetAll(string? nameEmployee, string? unit, int? unitId, bool? expiredStatus, string? sortBy, string? orderBy)
+        {
+            var query = _dbContext.Contracts
+                .Include(x => x.Unit)
+                .Include(p => p.ContractType)
+                .Include(p => p.ContractDuration)
+                .Include(p => p.Employee)
+                .AsNoTracking()
+                .Where(c => c.IsDeleted != true)
+                .AsQueryable();
+
+            if (!string.IsNullOrEmpty(nameEmployee))
+                query = query.Where(p => p.NameEmployee != null && p.NameEmployee.Contains(nameEmployee));
+            if (expiredStatus.HasValue)
+                query = query.Where(p => p.ExpiredStatus == expiredStatus);
+            if (!string.IsNullOrEmpty(unit))
+                query = query.Where(p => p.Unit != null && p.Unit.OrganizationName.Contains(unit));
+            if (unitId.HasValue)
+                query = query.Where(p => p.UnitId != null && p.UnitId == unitId);
+
+            query = query.ApplySorting(sortBy, orderBy);
+
+            return await _mapper.ProjectTo<ContractDTO>(query).ToListAsync();
         }
 
         public async Task<PagingResult<ContractDTO>> Paging(string? nameEmployee,string? unit, int? unitId,bool? expiredStatus, string? sortBy, string? orderBy, int pageIndex = 1, int pageSize = 10)
@@ -152,6 +177,5 @@ namespace HRM_BE.Data.Repositories
 
             return hasValidContract;
         }
-
     }
 }

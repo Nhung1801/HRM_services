@@ -26,6 +26,9 @@ namespace HRM_BE.Core.IRepositories
         Task<ContractDTO> GetById(int id);
         Task<bool> CheckEmployeeHaveContractValid(int employeeId);
 
+        Task<List<ContractDTO>> GetAll(string? nameEmployee, string? unit, int? unitId, bool? expiredStatus,
+            string? sortBy, string? orderBy);
+
 
     }
 }

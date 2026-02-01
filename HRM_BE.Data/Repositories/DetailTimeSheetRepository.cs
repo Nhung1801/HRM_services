@@ -60,48 +60,47 @@ namespace HRM_BE.Data.Repositories
 
         public async Task<PagingResult<DetailTimeSheetDto>> Paging(string? name, int? month, int? year, int? organizationId, string? staffPositionIds, string? sortBy, string? orderBy, int pageIndex = 1, int pageSize = 10)
         {
-            //var detailTimesheetNameids = await _dbContext.SummaryTimesheetNameDetailTimesheetNames.Select(s => s.DetailTimesheetNameId).ToListAsync();
-            var query = _dbContext.DetailTimesheetNames
-                //.Where(d => !_dbContext.SummaryTimesheetNameDetailTimesheetNames.Any(s => s.DetailTimesheetNameId == d.Id)) // lọc những id chưa tồn tại trong chấm công tổng hợp
-                //.Where( d => !detailTimesheetNameids.Contains(d.Id))
-                .Include(s => s.Organization).AsSplitQuery().AsNoTracking();
-            if (!string.IsNullOrEmpty(name))
+            try
             {
-                query = query.Where(c => c.TimekeepingSheetName.Contains(name));
+                var query = _dbContext.DetailTimesheetNames
+                    .Include(s => s.Organization).AsSplitQuery().AsNoTracking();
+
+                if (!string.IsNullOrEmpty(name))
+                    query = query.Where(c => c.TimekeepingSheetName.Contains(name));
+
+                // Only call GetAllChildOrganizationIds if organizationId has a value
+                List<int>? organizationDescendantIds = null;
+                if (organizationId.HasValue)
+                {
+                    organizationDescendantIds = await GetAllChildOrganizationIds(organizationId.Value);
+                    organizationDescendantIds.Add(organizationId.Value);
+                    query = query.Where(c => organizationDescendantIds.Contains(c.OrganizationId.Value));
+                }
+
+                if (!string.IsNullOrEmpty(staffPositionIds))
+                {
+                    var staffpositionIds = staffPositionIds.Split(',').Select(id => int.Parse(id)).ToList();
+                    query = query.Where(c => c.DetailTimesheetNameStaffPositions.Any(p => staffpositionIds.Contains(p.StaffPosition.Id)));
+                }
+
+                if (month.HasValue)
+                    query = query.Where(c => c.EndDate.Value.Month >= month || c.StartDate.Value.Month <= month);
+
+                if (year.HasValue)
+                    query = query.Where(c => c.EndDate.Value.Year >= year || c.StartDate.Value.Year <= year);
+
+                query = query.ApplySorting(sortBy, orderBy);
+                int total = await query.CountAsync();
+                query = query.ApplyPaging(pageIndex, pageSize);
+
+                var data = await _mapper.ProjectTo<DetailTimeSheetDto>(query).ToListAsync();
+                return new PagingResult<DetailTimeSheetDto>(data, pageIndex, pageSize, sortBy, orderBy, total);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception(ex.Message);
             }
 
-            var organizationDescendantIds = await GetAllChildOrganizationIds(organizationId.Value);
-            organizationDescendantIds.Add(organizationId.Value);
-            if (organizationId.HasValue)
-            {
-                query = query.Where(c => organizationDescendantIds.Contains(c.OrganizationId.Value));
-            }
-            if (!string.IsNullOrEmpty(staffPositionIds))
-            {
-                var staffpositionIds = staffPositionIds.Split(',').Select(id => int.Parse(id)).ToList();
-
-                query = query.Where(c => c.DetailTimesheetNameStaffPositions.Any(p => staffpositionIds.Contains(p.StaffPosition.Id)));
-            }
-            if (month.HasValue)
-            {
-                query = query.Where(c => c.EndDate.Value.Month >= month || c.StartDate.Value.Month <= month);
-            }
-            if (year.HasValue)
-            {
-                query = query.Where(c => c.EndDate.Value.Year >= year || c.StartDate.Value.Year <= year);
-            }
-            // Áp dụng sắp xếp
-            query = query.ApplySorting(sortBy, orderBy);
-            // Tính tổng số bản ghi
-            int total = await query.CountAsync();
-            // Áp dụng phân trang
-            query = query.ApplyPaging(pageIndex, pageSize);
-
-            var data = await _mapper.ProjectTo<DetailTimeSheetDto>(query).ToListAsync();
-
-            var result = new PagingResult<DetailTimeSheetDto>(data, pageIndex, pageSize, sortBy, orderBy, total);
-
-            return result;
         }
 
         public async Task Update(int id, UpdateDetailTimeSheetRequest request)

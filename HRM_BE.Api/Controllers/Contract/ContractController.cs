@@ -43,6 +43,13 @@ namespace HRM_BE.Api.Controllers.Profile
             _userService = userService;
         }
 
+        [HttpGet("get-all")]
+        public async Task<List<ContractDTO>> GetAll([FromQuery] GetContractPagingRequest request)
+        {
+            var result = await _unitOfWork.Contracts.GetAll(request.NameEmployee, request.Unit, request.UnitId, request.ExpiredStatus, request.SortBy, request.OrderBy);
+            return result;
+        }
+
         [HttpGet("paging")]
         public async Task<PagingResult<ContractDTO>> Paging([FromQuery] GetContractPagingRequest request)
         {
