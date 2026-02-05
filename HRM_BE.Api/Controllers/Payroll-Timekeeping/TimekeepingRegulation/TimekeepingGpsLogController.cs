@@ -1,9 +1,10 @@
-﻿using HRM_BE.Core.Data.Payroll_Timekeeping.TimekeepingRegulation;
+using HRM_BE.Core.Data.Payroll_Timekeeping.TimekeepingRegulation;
 using HRM_BE.Core.ISeedWorks;
 using HRM_BE.Core.Models.Common;
 using HRM_BE.Core.Models.Payroll_Timekeeping.TimekeepingRegulation;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Linq;
 
 namespace HRM_BE.Api.Controllers.Payroll_Timekeeping.TimekeepingRegulation
 {
@@ -51,12 +52,29 @@ namespace HRM_BE.Api.Controllers.Payroll_Timekeeping.TimekeepingRegulation
             // Lấy thông tin timesheet của nhân viên cho ca làm việc hôm nay
             var timesheet = await _unitOfWork.Timesheet.GetByEmployeeAndShiftAsync(employeeId, shiftWorkId.Value, nowDay);
 
+            // Lấy cấu hình áp dụng chấm công của tổ chức (ApplyOrganization)
+            // Để front-end biết có yêu cầu vị trí GPS khi chấm công hay không
+            var applyOrgPaging = await _unitOfWork.ApplyOrganization.Paging(
+                null,              // timekeepingSettingId
+                organizationId,    // organizationId
+                null,              // timekeepingLocationId
+                null,              // sortBy
+                null,              // orderBy
+                1,                 // pageIndex
+                1                  // pageSize
+            );
+
+            var applyOrg = applyOrgPaging.Items.FirstOrDefault();
+
             // Trả về thông tin checkin của nhân viên cho front-end
             var checkinStatus = new CheckInStatus
             {
                 CanCheckIn = false,   // Trạng thái checkin có thể thực hiện hay không
                 CanCheckOut = false,  // Trạng thái checkout có thể thực hiện hay không
-                IsCheckedOut = false  // Trạng thái đã checkout hay chưa
+                IsCheckedOut = false,  // Trạng thái đã checkout hay chưa
+                // Nếu không có cấu hình, mặc định cho phép chấm ở bất cứ đâu (không yêu cầu GPS)
+                TimekeepingLocationOption = applyOrg?.TimekeepingLocationOption ?? TimekeepingLocationOption.NotFix,
+                TimekeepingLocationId = applyOrg?.TimekeepingLocationId
             };
 
             if (timesheet == null)
@@ -148,18 +166,45 @@ namespace HRM_BE.Api.Controllers.Payroll_Timekeeping.TimekeepingRegulation
                 return Ok(ApiResult<bool>.Failure("Không tìm thấy thông tin chi tiết của ca làm việc", false));
             }
 
-            // Lấy thông tin địa điểm chấm công từ bảng TimekeepingLocation dựa trên OrganizationId
-            var location = await _unitOfWork.TimekeepingLocation.GetByOrganizationIdAsync(organizationId);
+            // Lấy cấu hình áp dụng chấm công của tổ chức (ApplyOrganization)
+            // Để biết tổ chức này có yêu cầu vị trí GPS khi chấm công hay không
+            var applyOrgPaging = await _unitOfWork.ApplyOrganization.Paging(
+                null,              // timekeepingSettingId
+                organizationId,    // organizationId
+                null,              // timekeepingLocationId
+                null,              // sortBy
+                null,              // orderBy
+                1,                 // pageIndex
+                1                  // pageSize
+            );
 
-            if (location == null)
+            var applyOrg = applyOrgPaging.Items.FirstOrDefault();
+
+            // Mặc định: nếu không có cấu hình thì vẫn kiểm tra theo địa điểm (giữ nguyên hành vi cũ)
+            var requiresLocation = true;
+            if (applyOrg != null)
             {
-                return Ok(ApiResult<bool>.Failure("Tổ chức của bạn hiện tại chưa thiết lập địa điểm chấm công", false));
+                // Quy ước:
+                // - TimekeepingLocationOption.NotFix: không yêu cầu vị trí -> có thể chấm ở bất cứ đâu
+                // - TimekeepingLocationOption.Fix: yêu cầu vị trí -> phải trong phạm vi GPS
+                requiresLocation = applyOrg.TimekeepingLocationOption == TimekeepingLocationOption.Fix;
             }
 
-            // Kiểm tra vị trí GPS của nhân viên có nằm trong bán kính cho phép không
-            if (!IsValidLocation(location, request.Latitude, request.Longitude))
+            if (requiresLocation)
             {
-                return Ok(ApiResult<bool>.Failure($"Hiện tại vị trí của bạn nằm ngoài phạm vi chấm công", false));
+                // Lấy thông tin địa điểm chấm công từ bảng TimekeepingLocation dựa trên OrganizationId
+                var location = await _unitOfWork.TimekeepingLocation.GetByOrganizationIdAsync(organizationId);
+
+                if (location == null)
+                {
+                    return Ok(ApiResult<bool>.Failure("Tổ chức của bạn hiện tại chưa thiết lập địa điểm chấm công", false));
+                }
+
+                // Kiểm tra vị trí GPS của nhân viên có nằm trong bán kính cho phép không
+                if (!IsValidLocation(location, request.Latitude, request.Longitude))
+                {
+                    return Ok(ApiResult<bool>.Failure($"Hiện tại vị trí của bạn nằm ngoài phạm vi chấm công", false));
+                }
             }
 
             // Kiểm tra dữ liệu chấm công theo ca
@@ -304,6 +349,11 @@ namespace HRM_BE.Api.Controllers.Payroll_Timekeeping.TimekeepingRegulation
         public bool CanCheckIn { get; set; }
         public bool CanCheckOut { get; set; }
         public bool IsCheckedOut { get; set; }
+
+        // 0: không yêu cầu vị trí (chấm ở bất cứ đâu)
+        // 1: yêu cầu vị trí (kiểm tra GPS trong phạm vi địa điểm)
+        public TimekeepingLocationOption TimekeepingLocationOption { get; set; }
+        public int? TimekeepingLocationId { get; set; }
     }
 
 }
