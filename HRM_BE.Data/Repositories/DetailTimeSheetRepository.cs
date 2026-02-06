@@ -135,6 +135,112 @@ namespace HRM_BE.Data.Repositories
                 throw new EntityNotFoundException(nameof(DetailTimesheetName), $"Id = {id}");
             return entity;
         }
+
+        /// <summary>
+        /// Lấy danh sách nhân viên + chấm công theo 1 DetailTimeSheet (KHÔNG phân trang)
+        /// Bắt đầu từ Employee (theo Organization) rồi lấy Timesheet trong khoảng thời gian của sheet.
+        /// </summary>
+        public async Task<List<GetDetailTimesheetWithEmployeeDto>> DetailTimeSheetWithEmployee(
+            int detailTimeSheetId,
+            string? keyWord,
+            int? organizationId,
+            string? sortBy,
+            string? orderBy)
+        {
+            var detailTimeSheet = await _dbContext.DetailTimesheetNames.FindAsync(detailTimeSheetId);
+            if (detailTimeSheet is null)
+                throw new EntityNotFoundException(nameof(DetailTimesheetName), $"Id = {detailTimeSheetId}");
+
+            if (!detailTimeSheet.StartDate.HasValue || !detailTimeSheet.EndDate.HasValue)
+                throw new Exception("DetailTimesheetName chưa cấu hình StartDate/EndDate.");
+
+            // Lấy gốc organization: ưu tiên tham số truyền vào, nếu null thì lấy từ DetailTimesheetName
+            int rootOrganizationId;
+            if (organizationId.HasValue)
+            {
+                rootOrganizationId = organizationId.Value;
+            }
+            else if (detailTimeSheet.OrganizationId.HasValue)
+            {
+                rootOrganizationId = detailTimeSheet.OrganizationId.Value;
+            }
+            else
+            {
+                throw new Exception("DetailTimesheetName không có OrganizationId và không truyền organizationId.");
+            }
+
+            // Lấy toàn bộ phòng ban con (cả cây) + chính nó
+            var organizationDescendantIds = await GetAllChildOrganizationIds(rootOrganizationId);
+            organizationDescendantIds.Add(rootOrganizationId);
+
+            var query = _dbContext.Employees
+                .Where(e => organizationDescendantIds.Contains(e.OrganizationId.Value)
+                            && e.AccountStatus == AccountStatus.Active)
+                .AsNoTracking();
+
+            if (!string.IsNullOrEmpty(keyWord))
+            {
+                keyWord = keyWord.Trim();
+                query = query.Where(c => (c.LastName.Trim() + " " + c.FirstName.Trim()).Contains(keyWord) ||
+                                         (c.FirstName.Trim() + " " + c.LastName.Trim()).Contains(keyWord));
+            }
+
+            // Lọc theo Timesheet trong khoảng thời gian của sheet
+            // Chỉ giữ những nhân viên có ít nhất 1 bản ghi chấm công trong khoảng StartDate-EndDate
+            query = query.Where(e => e.Timesheets.Any(t =>
+                t.Date.HasValue &&
+                t.Date.Value.Date >= detailTimeSheet.StartDate.Value.Date &&
+                t.Date.Value.Date <= detailTimeSheet.EndDate.Value.Date
+            ));
+
+            // Áp dụng sắp xếp (nếu có)
+            query = query.ApplySorting(sortBy, orderBy);
+
+            // Map ra DTO (không phân trang)
+            var data = await query.Select(e => new GetDetailTimesheetWithEmployeeDto
+            {
+                Id = e.Id,
+                EmployeeCode = e.EmployeeCode,
+                FirstName = e.FirstName,
+                LastName = e.LastName,
+                Timesheets = e.Timesheets
+                    .Where(t => t.Date.Value.Date >= detailTimeSheet.StartDate.Value.Date
+                                && t.Date.Value.Date <= detailTimeSheet.EndDate.Value.Date)
+                    .GroupBy(t => t.Date.Value.Date)
+                    .Select(g => new ConfirmTimeSheetDto
+                    {
+                        Date = g.Key,
+                        Shifts = g.Select(t => new ShiftDetailDto
+                        {
+                            TimeSheetId = t.Id,
+                            StartTime = t.StartTime,
+                            EndTime = t.EndTime,
+                            ShiftWorkId = t.ShiftWorkId,
+                            NumberOfWorkingHour = t.NumberOfWorkingHour,
+                            TimekeepingType = t.TimekeepingType,
+                            ShiftTableName = t.ShiftWork.ShiftTableName,
+                            TimeKeepingLeaveStatus = t.TimeKeepingLeaveStatus,
+                            IsEnoughWork = t.NumberOfWorkingHour >= (t.ShiftWork.ShiftCatalog.WorkingHours ?? 0)
+                        }).ToList()
+                    }).ToList(),
+                IsOffical = e.Contracts
+                    .Where(c => !c.ContractName.Contains(ContractConstant.InterContract)
+                                && c.SignStatus == SignStatus.Signed)
+                    .FirstOrDefault() != null,
+                Holidays = e.Organization.Holidays.Select(h => new HolidayDto
+                {
+                    Id = h.Id,
+                    Name = h.Name,
+                    FromDate = h.FromDate,
+                    ToDate = h.ToDate,
+                    OrganizationId = h.OrganizationId,
+                    ApplyObject = h.ApplyObject
+                }).ToList()
+            }).ToListAsync();
+
+            return data;
+        }
+
         // test commit
         public async Task<PagingResult<GetDetailTimesheetWithEmployeeDto>> DetailTimeSheetWithEmployeePaging(int detailTimeSheetId, string? keyWord, int? organizationId, string? sortBy, string? orderBy, int pageIndex = 1, int pageSize = 10)
         {
@@ -143,8 +249,25 @@ namespace HRM_BE.Data.Repositories
                 throw new EntityNotFoundException(nameof(DetailTimesheetName), $"Id = {detailTimeSheetId}");
 
 
-            var organizationDescendantIds = await GetAllChildOrganizationIds(organizationId.Value);
-            organizationDescendantIds.Add(organizationId.Value);
+            // Lấy gốc organization: ưu tiên tham số truyền vào, nếu null thì lấy từ DetailTimesheetName
+            int rootOrganizationId;
+            if (organizationId.HasValue)
+            {
+                rootOrganizationId = organizationId.Value;
+            }
+            else if (detailTimeSheet.OrganizationId.HasValue)
+            {
+                rootOrganizationId = detailTimeSheet.OrganizationId.Value;
+            }
+            else
+            {
+                throw new Exception("DetailTimesheetName không có OrganizationId và không truyền organizationId.");
+            }
+
+            // Lấy toàn bộ phòng ban con (cả cây) + chính nó
+            var organizationDescendantIds = await GetAllChildOrganizationIds(rootOrganizationId);
+            organizationDescendantIds.Add(rootOrganizationId);
+
             var query = _dbContext.Employees.Where(e => organizationDescendantIds.Contains(e.OrganizationId.Value) && e.AccountStatus == AccountStatus.Active).AsNoTracking();
 
             //query = query.Where( e => e.Timesheets.Any( t => t.Date >= detailTimeSheet.StartDate && t.Date <= detailTimeSheet.EndDate));

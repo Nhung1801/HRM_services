@@ -191,6 +191,7 @@ namespace HRM_BE.Api.Controllers.Payroll_Timekeeping.TimekeepingRegulation
             }
 
             if (requiresLocation)
+
             {
                 // Lấy thông tin địa điểm chấm công từ bảng TimekeepingLocation dựa trên OrganizationId
                 var location = await _unitOfWork.TimekeepingLocation.GetByOrganizationIdAsync(organizationId);

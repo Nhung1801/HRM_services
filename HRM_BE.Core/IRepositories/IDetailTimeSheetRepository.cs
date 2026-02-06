@@ -1,4 +1,4 @@
-﻿using HRM_BE.Core.Data.Payroll_Timekeeping.Shift;
+using HRM_BE.Core.Data.Payroll_Timekeeping.Shift;
 using HRM_BE.Core.ISeedWorks;
 using HRM_BE.Core.Models.Common;
 using HRM_BE.Core.Models.DetailTimeSheet;
@@ -20,6 +20,7 @@ namespace HRM_BE.Core.IRepositories
         Task Delete (int id);
         Task LockDetailTimeSheet(int id, bool isLock);
         Task<PagingResult<GetDetailTimesheetWithEmployeeDto>> DetailTimeSheetWithEmployeePaging(int detailTimeSheetId ,string? keyWord, int? organizationId, string? sortBy, string? orderBy, int pageIndex = 1, int pageSize = 10);
+        Task<List<GetDetailTimesheetWithEmployeeDto>> DetailTimeSheetWithEmployee(int detailTimeSheetId, string? keyWord, int? organizationId, string? sortBy, string? orderBy);
         Task<StatiscTimeSheetDto> StatiscTimeSheetDto(int detailTimeSheetId);
 
     }

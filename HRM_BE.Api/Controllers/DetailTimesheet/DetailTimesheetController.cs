@@ -1,4 +1,4 @@
-﻿using HRM_BE.Core.ISeedWorks;
+using HRM_BE.Core.ISeedWorks;
 using HRM_BE.Core.Models.Common;
 using HRM_BE.Core.Models.DetailTimeSheet;
 using HRM_BE.Core.Models.ShiftWork;
@@ -47,6 +47,24 @@ namespace HRM_BE.Api.Controllers.DetailTimesheet
 
 
             return ApiResult<PagingResult<GetDetailTimesheetWithEmployeeDto>>.Success("Lấy danh sách thông tin chi tiết chấm công", result);
+        }
+
+        [HttpGet("get-detail-time-sheet")]
+        public async Task<ApiResult<List<GetDetailTimesheetWithEmployeeDto>>> DetailTimeSheetWithEmployeeNoPaging(
+            [FromQuery] int detailTimeSheetId,
+            [FromQuery] string? keyWord,
+            [FromQuery] int? organizationId,
+            [FromQuery] string? sortBy,
+            [FromQuery] string? orderBy)
+        {
+            var result = await _unitOfWork.DetailTimeSheets.DetailTimeSheetWithEmployee(
+                detailTimeSheetId,
+                keyWord,
+                organizationId,
+                sortBy,
+                orderBy);
+
+            return ApiResult<List<GetDetailTimesheetWithEmployeeDto>>.Success("Lấy thông tin chi tiết chấm công ", result);
         }
         
         [HttpPost("create")]
