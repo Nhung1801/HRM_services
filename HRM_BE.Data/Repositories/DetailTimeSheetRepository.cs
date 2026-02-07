@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using HRM_BE.Core.Constants.Contract;
 using HRM_BE.Core.Data.Company;
 using HRM_BE.Core.Data.Official_Form;
@@ -48,7 +48,28 @@ namespace HRM_BE.Data.Repositories
         public async Task Delete(int id)
         {
             var entity = await GetDetailTimesheetAndCheckExsit(id);
-            entity.IsDeleted = false;
+
+            // Không cho xóa nếu đã có dữ liệu chấm công trong khoảng thời gian của bảng công chi tiết
+            if (entity.StartDate.HasValue && entity.EndDate.HasValue && entity.OrganizationId.HasValue)
+            {
+                var orgIds = await GetAllChildOrganizationIds(entity.OrganizationId.Value);
+                orgIds.Add(entity.OrganizationId.Value);
+
+                var hasTimesheetData = await _dbContext.Timesheets
+                    .AsNoTracking()
+                    .AnyAsync(t => t.EmployeeId != null
+                        && orgIds.Contains(t.Employee.OrganizationId ?? 0)
+                        && t.Date.HasValue
+                        && t.Date.Value.Date >= entity.StartDate.Value.Date
+                        && t.Date.Value.Date <= entity.EndDate.Value.Date
+                        && t.IsDeleted != true);
+
+                if (hasTimesheetData)
+                    throw new InvalidOperationException(
+                        $"Không thể xóa bảng công chi tiết. Đã tồn tại dữ liệu chấm công trong khoảng thời gian từ {entity.StartDate.Value:dd/MM/yyyy} đến {entity.EndDate.Value:dd/MM/yyyy}. Vui lòng xử lý dữ liệu chấm công trước khi xóa.");
+            }
+
+            entity.IsDeleted = true;
             await UpdateAsync(entity);
         }
 
@@ -136,10 +157,7 @@ namespace HRM_BE.Data.Repositories
             return entity;
         }
 
-        /// <summary>
-        /// Lấy danh sách nhân viên + chấm công theo 1 DetailTimeSheet (KHÔNG phân trang)
-        /// Bắt đầu từ Employee (theo Organization) rồi lấy Timesheet trong khoảng thời gian của sheet.
-        /// </summary>
+
         public async Task<List<GetDetailTimesheetWithEmployeeDto>> DetailTimeSheetWithEmployee(
             int detailTimeSheetId,
             string? keyWord,
@@ -147,96 +165,83 @@ namespace HRM_BE.Data.Repositories
             string? sortBy,
             string? orderBy)
         {
-            var detailTimeSheet = await _dbContext.DetailTimesheetNames.FindAsync(detailTimeSheetId);
+            var detailTimeSheet = await _dbContext.DetailTimesheetNames
+                .AsNoTracking()
+                .Where(d => d.Id == detailTimeSheetId)
+                .Select(d => new { d.Id, d.StartDate, d.EndDate, d.OrganizationId })
+                .FirstOrDefaultAsync();
             if (detailTimeSheet is null)
                 throw new EntityNotFoundException(nameof(DetailTimesheetName), $"Id = {detailTimeSheetId}");
 
             if (!detailTimeSheet.StartDate.HasValue || !detailTimeSheet.EndDate.HasValue)
-                throw new Exception("DetailTimesheetName chưa cấu hình StartDate/EndDate.");
+                throw new InvalidOperationException("DetailTimesheetName chưa cấu hình StartDate/EndDate.");
 
-            // Lấy gốc organization: ưu tiên tham số truyền vào, nếu null thì lấy từ DetailTimesheetName
-            int rootOrganizationId;
-            if (organizationId.HasValue)
-            {
-                rootOrganizationId = organizationId.Value;
-            }
-            else if (detailTimeSheet.OrganizationId.HasValue)
-            {
-                rootOrganizationId = detailTimeSheet.OrganizationId.Value;
-            }
-            else
-            {
-                throw new Exception("DetailTimesheetName không có OrganizationId và không truyền organizationId.");
-            }
+            int rootOrganizationId = organizationId ?? detailTimeSheet.OrganizationId ?? throw new InvalidOperationException("DetailTimesheetName không có OrganizationId và không truyền organizationId.");
 
-            // Lấy toàn bộ phòng ban con (cả cây) + chính nó
             var organizationDescendantIds = await GetAllChildOrganizationIds(rootOrganizationId);
             organizationDescendantIds.Add(rootOrganizationId);
 
+            var startDate = detailTimeSheet.StartDate.Value.Date;
+            var endDate = detailTimeSheet.EndDate.Value.Date;
+
             var query = _dbContext.Employees
-                .Where(e => organizationDescendantIds.Contains(e.OrganizationId.Value)
+                .Where(e => e.OrganizationId.HasValue
+                            && organizationDescendantIds.Contains(e.OrganizationId.Value)
                             && e.AccountStatus == AccountStatus.Active)
                 .AsNoTracking();
 
-            if (!string.IsNullOrEmpty(keyWord))
+            if (!string.IsNullOrWhiteSpace(keyWord))
             {
-                keyWord = keyWord.Trim();
-                query = query.Where(c => (c.LastName.Trim() + " " + c.FirstName.Trim()).Contains(keyWord) ||
-                                         (c.FirstName.Trim() + " " + c.LastName.Trim()).Contains(keyWord));
+                var kw = keyWord.Trim();
+                query = query.Where(c => (c.LastName + " " + c.FirstName).Contains(kw) || (c.FirstName + " " + c.LastName).Contains(kw));
             }
 
-            // Lọc theo Timesheet trong khoảng thời gian của sheet
-            // Chỉ giữ những nhân viên có ít nhất 1 bản ghi chấm công trong khoảng StartDate-EndDate
             query = query.Where(e => e.Timesheets.Any(t =>
-                t.Date.HasValue &&
-                t.Date.Value.Date >= detailTimeSheet.StartDate.Value.Date &&
-                t.Date.Value.Date <= detailTimeSheet.EndDate.Value.Date
-            ));
+                t.IsDeleted != true
+                && t.Date.HasValue
+                && t.Date.Value.Date >= startDate
+                && t.Date.Value.Date <= endDate));
 
-            // Áp dụng sắp xếp (nếu có)
             query = query.ApplySorting(sortBy, orderBy);
 
-            // Map ra DTO (không phân trang)
-            var data = await query.Select(e => new GetDetailTimesheetWithEmployeeDto
-            {
-                Id = e.Id,
-                EmployeeCode = e.EmployeeCode,
-                FirstName = e.FirstName,
-                LastName = e.LastName,
-                Timesheets = e.Timesheets
-                    .Where(t => t.Date.Value.Date >= detailTimeSheet.StartDate.Value.Date
-                                && t.Date.Value.Date <= detailTimeSheet.EndDate.Value.Date)
-                    .GroupBy(t => t.Date.Value.Date)
-                    .Select(g => new ConfirmTimeSheetDto
-                    {
-                        Date = g.Key,
-                        Shifts = g.Select(t => new ShiftDetailDto
-                        {
-                            TimeSheetId = t.Id,
-                            StartTime = t.StartTime,
-                            EndTime = t.EndTime,
-                            ShiftWorkId = t.ShiftWorkId,
-                            NumberOfWorkingHour = t.NumberOfWorkingHour,
-                            TimekeepingType = t.TimekeepingType,
-                            ShiftTableName = t.ShiftWork.ShiftTableName,
-                            TimeKeepingLeaveStatus = t.TimeKeepingLeaveStatus,
-                            IsEnoughWork = t.NumberOfWorkingHour >= (t.ShiftWork.ShiftCatalog.WorkingHours ?? 0)
-                        }).ToList()
-                    }).ToList(),
-                IsOffical = e.Contracts
-                    .Where(c => !c.ContractName.Contains(ContractConstant.InterContract)
-                                && c.SignStatus == SignStatus.Signed)
-                    .FirstOrDefault() != null,
-                Holidays = e.Organization.Holidays.Select(h => new HolidayDto
+            var data = await query
+                .AsSplitQuery()
+                .Select(e => new GetDetailTimesheetWithEmployeeDto
                 {
-                    Id = h.Id,
-                    Name = h.Name,
-                    FromDate = h.FromDate,
-                    ToDate = h.ToDate,
-                    OrganizationId = h.OrganizationId,
-                    ApplyObject = h.ApplyObject
-                }).ToList()
-            }).ToListAsync();
+                    Id = e.Id,
+                    EmployeeCode = e.EmployeeCode,
+                    FirstName = e.FirstName,
+                    LastName = e.LastName,
+                    Timesheets = e.Timesheets
+                        .Where(t => t.IsDeleted != true && t.Date.HasValue && t.Date.Value.Date >= startDate && t.Date.Value.Date <= endDate)
+                        .GroupBy(t => t.Date!.Value.Date)
+                        .Select(g => new ConfirmTimeSheetDto
+                        {
+                            Date = g.Key,
+                            Shifts = g.Select(t => new ShiftDetailDto
+                            {
+                                TimeSheetId = t.Id,
+                                StartTime = t.StartTime,
+                                EndTime = t.EndTime,
+                                ShiftWorkId = t.ShiftWorkId,
+                                NumberOfWorkingHour = t.NumberOfWorkingHour,
+                                TimekeepingType = t.TimekeepingType,
+                                ShiftTableName = t.ShiftWork.ShiftTableName,
+                                TimeKeepingLeaveStatus = t.TimeKeepingLeaveStatus,
+                                IsEnoughWork = t.NumberOfWorkingHour >= (t.ShiftWork.ShiftCatalog.WorkingHours ?? 0)
+                            }).ToList()
+                        }).ToList(),
+                    IsOffical = e.Contracts.Any(c => !c.ContractName.Contains(ContractConstant.InterContract) && c.SignStatus == SignStatus.Signed),
+                    Holidays = e.Organization.Holidays.Select(h => new HolidayDto
+                    {
+                        Id = h.Id,
+                        Name = h.Name,
+                        FromDate = h.FromDate,
+                        ToDate = h.ToDate,
+                        OrganizationId = h.OrganizationId,
+                        ApplyObject = h.ApplyObject
+                    }).ToList()
+                }).ToListAsync();
 
             return data;
         }

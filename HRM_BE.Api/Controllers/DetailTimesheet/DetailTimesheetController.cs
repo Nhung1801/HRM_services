@@ -1,3 +1,4 @@
+using HRM_BE.Core.Exceptions;
 using HRM_BE.Core.ISeedWorks;
 using HRM_BE.Core.Models.Common;
 using HRM_BE.Core.Models.DetailTimeSheet;
@@ -88,8 +89,19 @@ namespace HRM_BE.Api.Controllers.DetailTimesheet
         [HttpPut("delete")]
         public async Task<IActionResult> Delete([FromQuery] EntityIdentityRequest<int> request)
         {
-            var result = _unitOfWork.DetailTimeSheets.Delete(request.Id);
-            return Ok(ApiResult<bool>.Success("Xoá chi tiết chấm công thành công", true));
+            try
+            {
+                await _unitOfWork.DetailTimeSheets.Delete(request.Id);
+                return Ok(ApiResult<bool>.Success("Xoá chi tiết chấm công thành công", true));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResult<bool>.Failure(ex.Message, false));
+            }
+            catch (EntityNotFoundException ex)
+            {
+                return NotFound(ApiResult<bool>.Failure(ex.Message, false));
+            }
         }
     }
 }
