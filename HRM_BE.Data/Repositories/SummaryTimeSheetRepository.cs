@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using HRM_BE.Core.Constants;
 using HRM_BE.Core.Data.Company;
 using HRM_BE.Core.Data.Identity;
@@ -126,6 +126,83 @@ namespace HRM_BE.Data.Repositories
 
             return result;
         }
+
+        public async Task<List<GetSummaryTimeSheetWithEmployeeDto>> GetSummaryTimeSheetWithEmployeeList(int summaryTimeSheetId, int organizationId, string? keyWord, int? staffPositionId, string? sortBy, string? orderBy)
+        {
+            var periodTime = await _dbContext.SummaryTimesheetNames
+                .Where(s => s.Id == summaryTimeSheetId)
+                .Select(d => new
+                {
+                    minStartDate = d.SummaryTimesheetNameDetailTimesheetNames.Min(s => s.DetailTimesheetName.StartDate),
+                    maxEndDate = d.SummaryTimesheetNameDetailTimesheetNames.Max(s => s.DetailTimesheetName.EndDate)
+                })
+                .FirstOrDefaultAsync();
+
+            if (periodTime is null)
+            {
+                throw new EntityNotFoundException($"Bảng chấm công tổng hợp Id = {summaryTimeSheetId} chưa bao gồm bảng chấm công chi tiết nào");
+            }
+
+            var organizationDescendantIds = await GetAllChildOrganizationIds(organizationId);
+            organizationDescendantIds.Add(organizationId);
+
+            var query = _dbContext.Employees
+                .Where(e => organizationDescendantIds.Contains(e.OrganizationId.Value) && e.AccountStatus == AccountStatus.Active)
+                .AsNoTracking();
+
+            if (!string.IsNullOrEmpty(keyWord))
+            {
+                keyWord = keyWord.Trim();
+                query = query.Where(c => (c.LastName.Trim() + " " + c.FirstName.Trim()).Contains(keyWord) ||
+                                         (c.FirstName.Trim() + " " + c.LastName.Trim()).Contains(keyWord));
+            }
+
+            if (staffPositionId.HasValue)
+            {
+                query = query.Where(c => c.StaffPositionId == staffPositionId);
+            }
+
+            query = query.Where(e => e.Contracts.Count(c => c.ExpiredStatus == false) == 1);
+
+            // Giữ nguyên cách gọi ApplySorting như các repo khác trong dự án
+            query = query.ApplySorting(sortBy, orderBy);
+
+            var data = await query.Select(e => new GetSummaryTimeSheetWithEmployeeDto
+            {
+                Id = e.Id,
+                EmployeeCode = e.EmployeeCode,
+                FirstName = e.FirstName,
+                LastName = e.LastName,
+                TotalWorkingDay = 0,
+                TotalHour = 0,
+                TotalLeaveDay = 0,
+                Status = e.SummaryTimesheetNameEmployeeConfirms
+                    .Where(s => s.SummaryTimesheetNameId == summaryTimeSheetId)
+                    .Select(s => s.Status ?? SummaryTimesheetNameEmployeeConfirmStatus.None)
+                    .FirstOrDefault(),
+                DatePerMonth = e.Timesheets
+                    .Where(t => t.Date >= periodTime.minStartDate.Value && t.Date <= periodTime.maxEndDate.Value)
+                    .Select(s => s.Date.Value.Day)
+                    .Distinct()
+                    .Count(),
+                StaffPosition = new GetDetailTimeSheetStaffPositionDto
+                {
+                    Id = e.StaffPosition.Id,
+                    PositionName = e.StaffPosition.PositionName,
+                    PositionCode = e.StaffPosition.PositionCode
+                },
+                Organization = new GetOrganizationForEmployeeDto
+                {
+                    Id = e.Organization.Id,
+                    OrganizationName = e.Organization.OrganizationName
+                },
+                StartDate = periodTime.minStartDate.Value.Date,
+                EndDate = periodTime.maxEndDate.Value.Date
+            }).ToListAsync();
+
+            return data;
+        }
+
         public async Task<List<int>> GetAllChildOrganizationIds(int parentId)
         {
             // Lấy tất cả các tổ chức

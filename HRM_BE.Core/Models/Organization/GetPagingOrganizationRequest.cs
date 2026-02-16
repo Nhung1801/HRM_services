@@ -1,4 +1,4 @@
-﻿using HRM_BE.Core.Models.Common;
+using HRM_BE.Core.Models.Common;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -10,5 +10,6 @@ namespace HRM_BE.Core.Models.Organization
     public class GetPagingOrganizationRequest:PagingRequest
     {
         public string? keyWord { get; set; }
+        public int? OrganizationId { get; set; }
     }
 }

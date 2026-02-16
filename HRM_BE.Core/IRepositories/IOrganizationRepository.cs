@@ -1,4 +1,4 @@
-﻿using HRM_BE.Core.Data.Company;
+using HRM_BE.Core.Data.Company;
 using HRM_BE.Core.ISeedWorks;
 using HRM_BE.Core.Models.Common;
 using HRM_BE.Core.Models.Organization;
@@ -22,9 +22,20 @@ namespace HRM_BE.Core.IRepositories
         Task<OrganizationSelectDto> GetSelect(int organizationId);
         Task<PagingResult<GetOrganizationDto>> GetAll(string? keyWord,string? sortBy,string? orderBy, int pageIndex = 1, int pageSize = 10);
 
-        Task<PagingResult<GetOrganizationDto>> Paging(string? keyWord, string? sortBy, string? orderBy,
-            int pageIndex = 1, int pageSize = 10);
+        Task<PagingResult<GetOrganizationDto>> Paging(
+            string? keyWord,
+            string? sortBy,
+            string? orderBy,
+            int pageIndex = 1,
+            int pageSize = 10,
+            int? organizationId = null);
         int GetRootOrganizationId(int childOrganizationId);
+
+        Task<List<GetOrganizationDto>> Export(
+            string? keyWord,
+            int? organizationId,
+            string? sortBy,
+            string? orderBy);
 
     }
 }

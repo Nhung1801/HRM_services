@@ -1,4 +1,4 @@
-﻿using HRM_BE.Core.Data.Payroll_Timekeeping.Shift;
+using HRM_BE.Core.Data.Payroll_Timekeeping.Shift;
 using HRM_BE.Core.ISeedWorks;
 using HRM_BE.Core.Models.Common;
 using HRM_BE.Core.Models.SumaryTimeSheet;
@@ -18,6 +18,7 @@ namespace HRM_BE.Core.IRepositories
         Task Update (int id , UpdateSummaryTimeSheetRequest request);
         Task Delete (int id);
         Task<PagingResult<GetSummaryTimeSheetWithEmployeeDto>> GetSummaryTimeSheetPaging(int summaryTimeSheetId,int organizationId, string? keyWord, int? staffPositionId, string? sortBy, string? orderBy, int pageIndex, int pageSize);
+        Task<List<GetSummaryTimeSheetWithEmployeeDto>> GetSummaryTimeSheetWithEmployeeList(int summaryTimeSheetId, int organizationId, string? keyWord, int? staffPositionId, string? sortBy, string? orderBy);
         Task<List<GetSelectSummaryTimeSheetDto>> GetSelectSummaryTimeSheet();
     }
 }

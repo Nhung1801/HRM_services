@@ -1,9 +1,10 @@
-﻿using HRM_BE.Core.ISeedWorks;
+using HRM_BE.Core.ISeedWorks;
 using HRM_BE.Core.Models.Common;
 using HRM_BE.Core.Models.Organization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using System.Text;
 
 namespace HRM_BE.Api.Controllers.Company
 {
@@ -33,8 +34,64 @@ namespace HRM_BE.Api.Controllers.Company
         [HttpGet("paging")]
         public async Task<ApiResult<PagingResult<GetOrganizationDto>>> Paging([FromQuery] GetPagingOrganizationRequest request)
         {
-            var result = await _unitOfWork.Organizations.Paging(request.keyWord, request.SortBy, request.OrderBy, request.PageIndex, request.PageSize);
+            var result = await _unitOfWork.Organizations.Paging(
+                request.keyWord,
+                request.SortBy,
+                request.OrderBy,
+                request.PageIndex,
+                request.PageSize,
+                request.OrganizationId);
+
             return ApiResult<PagingResult<GetOrganizationDto>>.Success("Lấy danh sách tổ chức thành công", result);
+        }
+
+        [HttpGet("get-all")]
+        public async Task<IActionResult> GetAll(
+            [FromQuery] string? keyWord,
+            [FromQuery] int? organizationId,
+            [FromQuery] string? sortBy,
+            [FromQuery] string? orderBy)
+        {
+            // Lấy toàn bộ danh sách (không phân trang) có thể lọc theo keyWord và OrganizationId
+            var items = await _unitOfWork.Organizations.Export(
+                keyWord,
+                organizationId,
+                sortBy,
+                orderBy);
+
+            return Ok(ApiResult<List<GetOrganizationDto>>.Success("Lấy danh sách tổ chức thành công", items));
+        }
+
+        [HttpGet("export")]
+        public async Task<IActionResult> Export(
+            [FromQuery] string? keyWord,
+            [FromQuery] int? organizationId,
+            [FromQuery] string? sortBy,
+            [FromQuery] string? orderBy)
+        {
+            // Sử dụng lại logic Export ở repository (dựa trên Paging)
+            var items = await _unitOfWork.Organizations.Export(
+                keyWord,
+                organizationId,
+                sortBy,
+                orderBy);
+
+            // Xuất CSV đơn giản (Excel vẫn mở được)
+            var sb = new StringBuilder();
+            sb.AppendLine("OrganizationCode,OrganizationName,Abbreviation,TotalEmployees");
+
+            foreach (var item in items)
+            {
+                var code = item.OrganizationCode?.Replace(",", " ") ?? string.Empty;
+                var name = item.OrganizationName?.Replace(",", " ") ?? string.Empty;
+                var abbr = item.Abbreviation?.Replace(",", " ") ?? string.Empty;
+                var totalEmployees = item.TotalEmployees;
+
+                sb.AppendLine($"{code},{name},{abbr},{totalEmployees}");
+            }
+
+            var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+            return File(bytes, "text/csv", "organizations.csv");
         }
 
         [HttpGet("get-select")]

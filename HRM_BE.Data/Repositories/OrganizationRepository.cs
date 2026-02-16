@@ -357,11 +357,12 @@ namespace HRM_BE.Data.Repositories
         }
 
         public async Task<PagingResult<GetOrganizationDto>> Paging(
-    string? keyWord,
-    string? sortBy,
-    string? orderBy,
-    int pageIndex = 1,
-    int pageSize = 10)
+            string? keyWord,
+            string? sortBy,
+            string? orderBy,
+            int pageIndex = 1,
+            int pageSize = 10,
+            int? organizationId = null)
         {
             // =====================================================
             // 1. LOAD FULL DATA (KHÔNG SEARCH – KHÔNG PAGING)
@@ -415,6 +416,12 @@ namespace HRM_BE.Data.Repositories
             }
 
             var roots = nodes.Where(x => x.ParentId == null).ToList();
+
+            // Nếu truyền OrganizationId thì chỉ lấy cây con bắt đầu từ node đó
+            if (organizationId.HasValue && nodeMap.TryGetValue(organizationId.Value, out var orgRoot))
+            {
+                roots = new List<OrgNode> { orgRoot };
+            }
 
             // =====================================================
             // 4. SEARCH LOGIC (THEO YÊU CẦU MỚI)
@@ -722,6 +729,152 @@ namespace HRM_BE.Data.Repositories
                 // Chuyển sang ParentOrganizationId
                 currentId = currentOrg.OrganizatioParentId;
             }
+        }
+
+        public async Task<List<GetOrganizationDto>> Export(
+            string? keyWord,
+            int? organizationId,
+            string? sortBy,
+            string? orderBy)
+        {
+            // =====================================================
+            // 1. LOAD FULL DATA (KHÔNG SEARCH – KHÔNG PAGING)
+            // =====================================================
+            var organizations = await _dbContext.Organizations
+                .AsNoTracking()
+                .Include(o => o.Employees)
+                .Include(o => o.OrganizationType)
+                .Include(o => o.OrganizationLeaders)
+                    .ThenInclude(ol => ol.Employee)
+                .ToListAsync();
+
+            // =====================================================
+            // 2. MAP → NODE PHẲNG
+            // =====================================================
+            var nodes = organizations.Select(o => new OrgNode
+            {
+                Id = o.Id,
+                ParentId = o.OrganizatioParentId,
+                OrganizationCode = o.OrganizationCode,
+                OrganizationName = o.OrganizationName,
+                Abbreviation = o.Abbreviation,
+                DirectEmployees = o.Employees.Count,
+                OrganizationType = o.OrganizationType,
+                Leaders = o.OrganizationLeaders
+                    .Where(x => x.OrganizationLeaderType == OrganizationLeaderType.Leader)
+                    .Select(x => new OrganizationLeaderDto
+                    {
+                        OrganizationLeaderType = x.OrganizationLeaderType,
+                        Employee = new GetOrganizationLeaderDto
+                        {
+                            Id = x.Employee.Id,
+                            FirstName = x.Employee.FirstName,
+                            LastName = x.Employee.LastName
+                        }
+                    })
+                    .ToList()
+            }).ToList();
+
+            // =====================================================
+            // 3. BUILD TREE
+            // =====================================================
+            var nodeMap = nodes.ToDictionary(x => x.Id);
+
+            foreach (var node in nodes)
+            {
+                if (node.ParentId.HasValue && nodeMap.ContainsKey(node.ParentId.Value))
+                {
+                    nodeMap[node.ParentId.Value].Children.Add(node);
+                }
+            }
+
+            var roots = nodes.Where(x => x.ParentId == null).ToList();
+
+            // Nếu truyền OrganizationId thì chỉ lấy cây con bắt đầu từ node đó
+            if (organizationId.HasValue && nodeMap.TryGetValue(organizationId.Value, out var orgRoot))
+            {
+                roots = new List<OrgNode> { orgRoot };
+            }
+
+            // =====================================================
+            // 4. SEARCH LOGIC (THEO YÊU CẦU MỚI)
+            // =====================================================
+            HashSet<int> matchedIds = new();
+            Dictionary<int, string> nodeTypes = new(); // "Root", "Unit", "Department"
+
+            if (!string.IsNullOrWhiteSpace(keyWord))
+            {
+                var matched = nodes
+                    .Where(x =>
+                        x.OrganizationName.Contains(keyWord, StringComparison.OrdinalIgnoreCase)
+                        || x.OrganizationCode.Contains(keyWord, StringComparison.OrdinalIgnoreCase)
+                        || (x.Abbreviation != null &&
+                            x.Abbreviation.Contains(keyWord, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+
+                foreach (var m in matched)
+                {
+                    matchedIds.Add(m.Id);
+
+                    // Xác định loại node
+                    if (m.ParentId == null)
+                    {
+                        nodeTypes[m.Id] = "Root";
+                    }
+                    else if (m.OrganizationType?.OrganizationTypeName == "Unit")
+                    {
+                        nodeTypes[m.Id] = "Unit";
+                    }
+                    else
+                    {
+                        nodeTypes[m.Id] = "Department";
+                    }
+                }
+            }
+
+            List<OrgNode> filteredRoots;
+
+            if (matchedIds.Any())
+            {
+                filteredRoots = new List<OrgNode>();
+
+                foreach (var root in roots)
+                {
+                    var clonedRoot = CloneNode(root);
+                    if (FilterTree(clonedRoot, matchedIds, nodeTypes))
+                    {
+                        filteredRoots.Add(clonedRoot);
+                    }
+                }
+            }
+            else
+            {
+                filteredRoots = roots;
+            }
+
+            // =====================================================
+            // 5. SORT (KHÔNG PAGING)
+            // =====================================================
+            if (!string.IsNullOrWhiteSpace(sortBy))
+            {
+                filteredRoots = orderBy?.ToLower() == "desc"
+                    ? filteredRoots.OrderByDescending(x => GetPropertyValue(x, sortBy)).ToList()
+                    : filteredRoots.OrderBy(x => GetPropertyValue(x, sortBy)).ToList();
+            }
+
+            // =====================================================
+            // 6. TOTAL EMPLOYEES (ĐỆ QUY ĐÚNG)
+            // =====================================================
+            foreach (var root in filteredRoots)
+            {
+                CalculateTotalEmployees(root);
+            }
+
+            // =====================================================
+            // 7. MAP → DTO (KHÔNG BỌC PAGING)
+            // =====================================================
+            var items = filteredRoots.Select(MapToDto).ToList();
+            return items;
         }
 
     }
