@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -12,6 +12,7 @@ namespace HRM_BE.Core.Models.SumaryTimeSheet
         public string Name { get; set; }
         public DateTime StartDate { get; set; }
         public DateTime EndDate  { get; set; }
+        public string? TimekeepingMethod { get; set; }
 
     }
 }

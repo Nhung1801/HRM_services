@@ -368,7 +368,10 @@ namespace HRM_BE.Data.Repositories
                 Id = s.Id,
                 Name = s.TimekeepingSheetName,
                 StartDate = new DateTime(),
-                EndDate = new DateTime()
+                EndDate = new DateTime(),
+                TimekeepingMethod = s.TimekeepingMethod.HasValue
+                    ? (s.TimekeepingMethod.Value == TimekeepingMethod.Hour ? "Giờ" : "Ngày")
+                    : null
             }).ToListAsync();
 
             foreach ( var item in data)
@@ -387,6 +390,67 @@ namespace HRM_BE.Data.Repositories
             }
             return data;
 
+        }
+
+        public async Task<List<GetSelectSummaryTimeSheetDto>> GetSelectSummaryTimeSheetForPayroll(int? organizationId, string? staffPositionIds)
+        {
+            // Mặc định lấy theo OrganizationId trong token (giống GetSelectSummaryTimeSheet hiện tại)
+            var tokenOrganizationId = int.Parse(_httpContextAccessor.HttpContext.User.Claims.First(x => x.Type == ClaimTypeConstant.OrganizationId).Value);
+            var resolvedOrganizationId = organizationId ?? tokenOrganizationId;
+
+            List<int>? staffPositionIdList = null;
+            if (!string.IsNullOrWhiteSpace(staffPositionIds))
+            {
+                staffPositionIdList = staffPositionIds
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(s => int.TryParse(s, out var id) ? (int?)id : null)
+                    .Where(id => id.HasValue)
+                    .Select(id => id!.Value)
+                    .Distinct()
+                    .ToList();
+
+                if (staffPositionIdList.Count == 0)
+                {
+                    staffPositionIdList = null;
+                }
+            }
+
+            // Chỉ lấy những bảng công tổng hợp đã có ít nhất 1 bảng công chi tiết có đủ Start/End
+            var query = _dbContext.SummaryTimesheetNames
+                .AsNoTracking()
+                .Where(s => s.OrganizationId == resolvedOrganizationId)
+                .Where(s => s.SummaryTimesheetNameDetailTimesheetNames.Any(d =>
+                    d.DetailTimesheetName != null &&
+                    d.DetailTimesheetName.StartDate.HasValue &&
+                    d.DetailTimesheetName.EndDate.HasValue));
+
+            // Lọc theo vị trí (nếu có)
+            if (staffPositionIdList != null)
+            {
+                query = query.Where(s => s.SummaryTimesheetNameStaffPositions.Any(sp =>
+                    sp.StaffPositionId.HasValue && staffPositionIdList.Contains(sp.StaffPositionId.Value)));
+            }
+
+            // Tính period (min/max) trong 1 query, tránh N+1 và tránh throw khi thiếu dữ liệu
+            var data = await query
+                .Select(s => new GetSelectSummaryTimeSheetDto
+                {
+                    Id = s.Id,
+                    Name = s.TimekeepingSheetName,
+                    StartDate = s.SummaryTimesheetNameDetailTimesheetNames
+                        .Where(d => d.DetailTimesheetName.StartDate.HasValue)
+                        .Min(d => d.DetailTimesheetName.StartDate!.Value),
+                    EndDate = s.SummaryTimesheetNameDetailTimesheetNames
+                        .Where(d => d.DetailTimesheetName.EndDate.HasValue)
+                        .Max(d => d.DetailTimesheetName.EndDate!.Value),
+                    TimekeepingMethod = s.TimekeepingMethod.HasValue
+                        ? (s.TimekeepingMethod.Value == TimekeepingMethod.Hour ? "Giờ" : "Ngày")
+                        : null
+                })
+                .OrderByDescending(x => x.EndDate)
+                .ToListAsync();
+
+            return data;
         }
     }
 }

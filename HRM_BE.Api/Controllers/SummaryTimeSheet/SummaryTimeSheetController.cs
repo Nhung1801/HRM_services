@@ -191,6 +191,21 @@ namespace HRM_BE.Api.Controllers.SummaryTimeSheet
 
             return ApiResult<List<GetSelectSummaryTimeSheetDto>>.Success("Lấy chi tiết chấm công tổng hợp thành công", result);
         }
+
+        /// <summary>
+        /// API dùng để get chấm công tổng hợp cho màn tạo bảng lương.
+        /// (FE đang gọi: /api/summary-time-sheet/get-summary-select-for-payroll)
+        /// </summary>
+        /// <param name="organizationId">Tuỳ chọn. Nếu không truyền sẽ lấy theo OrganizationId trong token.</param>
+        /// <param name="staffPositionIds">Tuỳ chọn. Danh sách id phân tách bởi dấu phẩy, ví dụ: "1,2,3".</param>
+        [HttpGet("get-summary-select-for-payroll")]
+        public async Task<ApiResult<List<GetSelectSummaryTimeSheetDto>>> GetSummaryTimeSheetSelectForPayroll(
+            [FromQuery] int? organizationId,
+            [FromQuery] string? staffPositionIds)
+        {
+            var result = await _unitOfWork.SummaryTimeSheets.GetSelectSummaryTimeSheetForPayroll(organizationId, staffPositionIds);
+            return ApiResult<List<GetSelectSummaryTimeSheetDto>>.Success("Lấy danh sách bảng chấm công tổng hợp cho tạo bảng lương thành công", result);
+        }
         /// <summary>
         /// HRM-Phân trang
         /// </summary> 

@@ -20,5 +20,6 @@ namespace HRM_BE.Core.IRepositories
         Task<PagingResult<GetSummaryTimeSheetWithEmployeeDto>> GetSummaryTimeSheetPaging(int summaryTimeSheetId,int organizationId, string? keyWord, int? staffPositionId, string? sortBy, string? orderBy, int pageIndex, int pageSize);
         Task<List<GetSummaryTimeSheetWithEmployeeDto>> GetSummaryTimeSheetWithEmployeeList(int summaryTimeSheetId, int organizationId, string? keyWord, int? staffPositionId, string? sortBy, string? orderBy);
         Task<List<GetSelectSummaryTimeSheetDto>> GetSelectSummaryTimeSheet();
+        Task<List<GetSelectSummaryTimeSheetDto>> GetSelectSummaryTimeSheetForPayroll(int? organizationId, string? staffPositionIds);
     }
 }
