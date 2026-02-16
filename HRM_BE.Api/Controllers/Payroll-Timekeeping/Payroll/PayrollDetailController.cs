@@ -1,4 +1,4 @@
-﻿using Azure.Core;
+using Azure.Core;
 using HRM_BE.Core.Data.Payroll_Timekeeping.Payroll;
 using HRM_BE.Core.ISeedWorks;
 using HRM_BE.Core.Models.Common;
@@ -44,6 +44,24 @@ namespace HRM_BE.Api.Controllers.Payroll_Timekeeping.Payroll
             {
                 await _unitOfWork.PayrollDetails.CalculateAndSavePayrollDetails(payrollId);
                 return Ok(ApiResult<bool>.Success("Tính toán bảng lương chi tiết thành công", true));
+            }
+            catch (Exception ex)
+            {
+                return Ok(ApiResult<bool>.Failure(ex.Message, false));
+            }
+        }
+
+        /// <summary>
+        /// HRM - Cập nhật (tính lại) phiếu lương cho 1 bảng lương.
+        /// FE đang dùng route: payroll-detail/recalculate-and-save-payroll-details
+        /// </summary>
+        [HttpPost("recalculate-and-save-payroll-details")]
+        public async Task<IActionResult> RecalculateAndSavePayrollDetails([FromQuery] int payrollId)
+        {
+            try
+            {
+                await _unitOfWork.PayrollDetails.RecalculateAndSavePayrollDetails(payrollId);
+                return Ok(ApiResult<bool>.Success("Cập nhật phiếu lương thành công", true));
             }
             catch (Exception ex)
             {

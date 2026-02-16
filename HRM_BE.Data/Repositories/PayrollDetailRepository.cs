@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using HRM_BE.Core.Data.Payroll_Timekeeping.Payroll;
 using HRM_BE.Core.Data.Profile;
 using HRM_BE.Core.Exceptions;
@@ -164,6 +164,41 @@ namespace HRM_BE.Data.Repositories
             }
 
             await CreateRangeAsync(payrollDetails);
+        }
+
+        public async Task RecalculateAndSavePayrollDetails(int payrollId)
+        {
+            var payroll = await _dbContext.Payrolls
+                .FirstOrDefaultAsync(p => p.Id == payrollId && p.IsDeleted != true);
+
+            if (payroll == null)
+            {
+                throw new EntityNotFoundException(nameof(Payroll), $"Id = {payrollId}");
+            }
+
+            // Nếu đã khóa thì không cho cập nhật (tính lại) phiếu lương
+            if (payroll.PayrollStatus == PayrollStatus.Locked)
+            {
+                throw new Exception("Bảng lương đã khóa, không thể cập nhật phiếu lương.");
+            }
+
+            // Soft delete các bản ghi cũ để tránh bị trùng dữ liệu
+            var existingDetails = await _dbContext.PayrollDetails
+                .Where(pd => pd.PayrollId == payrollId && pd.IsDeleted != true)
+                .ToListAsync();
+
+            if (existingDetails.Any())
+            {
+                foreach (var item in existingDetails)
+                {
+                    item.IsDeleted = true;
+                    item.UpdatedAt = DateTime.Now;
+                }
+                await UpdateRangeAsync(existingDetails);
+            }
+
+            // Tính lại và lưu mới
+            await CalculateAndSavePayrollDetails(payrollId);
         }
 
         public async Task<List<PayrollDetailDto>> FetchPayrollDetails(int payrollId)
