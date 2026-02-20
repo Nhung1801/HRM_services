@@ -69,6 +69,57 @@ namespace HRM_BE.Api.Controllers.Payroll_Timekeeping.Payroll
             }
         }
 
+        /// <summary>
+        /// HRM - Sửa phiếu lương (PayrollDetail)
+        /// </summary>
+        [HttpPut("update")]
+        public async Task<IActionResult> Update([FromQuery] int id, [FromBody] UpdatePayrollDetailRequest request)
+        {
+            try
+            {
+                await _unitOfWork.PayrollDetails.Update(id, request);
+                return Ok(ApiResult<bool>.Success("Cập nhật phiếu lương thành công", true));
+            }
+            catch (Exception ex)
+            {
+                return Ok(ApiResult<bool>.Failure(ex.Message, false));
+            }
+        }
+
+        /// <summary>
+        /// HRM - Xóa phiếu lương (soft delete)
+        /// </summary>
+        [HttpPut("delete")]
+        public async Task<IActionResult> Delete([FromQuery] EntityIdentityRequest<int> request)
+        {
+            try
+            {
+                await _unitOfWork.PayrollDetails.Delete(request.Id);
+                return Ok(ApiResult<bool>.Success("Xóa phiếu lương thành công", true));
+            }
+            catch (Exception ex)
+            {
+                return Ok(ApiResult<bool>.Failure(ex.Message, false));
+            }
+        }
+
+        /// <summary>
+        /// HRM - Xóa nhiều phiếu lương (soft delete)
+        /// </summary>
+        [HttpPut("delete-range")]
+        public async Task<IActionResult> DeleteRange([FromBody] ListIntRequest request)
+        {
+            try
+            {
+                await _unitOfWork.PayrollDetails.DeleteRange(request.Ids ?? new List<int>());
+                return Ok(ApiResult<bool>.Success("Xóa phiếu lương thành công", true));
+            }
+            catch (Exception ex)
+            {
+                return Ok(ApiResult<bool>.Failure(ex.Message, false));
+            }
+        }
+
         [HttpPost("fetch-payroll-details")]
         public async Task<List<PayrollDetailDto>> FetchPayrollDetails(int payrollId)
         {

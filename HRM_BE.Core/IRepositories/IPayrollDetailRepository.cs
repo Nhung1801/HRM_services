@@ -16,6 +16,9 @@ namespace HRM_BE.Core.IRepositories
         Task<PayrollDetailDto> GetById(int id);
         Task CalculateAndSavePayrollDetails(int payrollId);
         Task RecalculateAndSavePayrollDetails(int payrollId);
+        Task Update(int id, UpdatePayrollDetailRequest request);
+        Task Delete(int id);
+        Task DeleteRange(List<int> ids);
         Task<List<PayrollDetailDto>> FetchPayrollDetails(int payrollId);
         Task SendPayrollDetailConfirmation(UpdateSendPayrollDetailConfirmationRequest request);
         Task ConfirmPayrollDetailByEmployee(int payrollDetailId);

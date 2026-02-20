@@ -1,4 +1,4 @@
-﻿using HRM_BE.Api.Services.Interfaces;
+using HRM_BE.Api.Services.Interfaces;
 using HRM_BE.Core.Constants;
 using HRM_BE.Core.Constants.System;
 using HRM_BE.Core.Data.Identity;
@@ -48,6 +48,59 @@ namespace HRM_BE.Api.Services
             try
             {
                 var permissions = await GetRecursive(null);
+
+                if (!string.IsNullOrWhiteSpace(request.Name) ||
+                    !string.IsNullOrWhiteSpace(request.DisplayName) ||
+                    !string.IsNullOrWhiteSpace(request.Description) ||
+                    request.Section.HasValue)
+                {
+                    var nameFilter = request.Name?.Trim();
+                    var displayNameFilter = request.DisplayName?.Trim();
+                    var descriptionFilter = request.Description?.Trim();
+                    var sectionFilter = request.Section;
+
+                    bool Match(PermissionDto p)
+                    {
+                        if (p == null) return false;
+
+                        if (!string.IsNullOrEmpty(nameFilter) &&
+                            (string.IsNullOrEmpty(p.Name) ||
+                             !p.Name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase)))
+                            return false;
+
+                        if (!string.IsNullOrEmpty(displayNameFilter) &&
+                            (string.IsNullOrEmpty(p.DisplayName) ||
+                             !p.DisplayName.Contains(displayNameFilter, StringComparison.OrdinalIgnoreCase)))
+                            return false;
+
+                        if (!string.IsNullOrEmpty(descriptionFilter) &&
+                            (string.IsNullOrEmpty(p.Description) ||
+                             !p.Description.Contains(descriptionFilter, StringComparison.OrdinalIgnoreCase)))
+                            return false;
+
+                        if (sectionFilter.HasValue && p.Section != sectionFilter)
+                            return false;
+
+                        return true;
+                    }
+
+                    List<PermissionDto> FilterTree(IEnumerable<PermissionDto> nodes)
+                    {
+                        var result = new List<PermissionDto>();
+                        foreach (var node in nodes ?? Enumerable.Empty<PermissionDto>())
+                        {
+                            var filteredChildren = FilterTree(node.Childrens);
+                            var isMatch = Match(node) || filteredChildren.Count > 0;
+                            if (!isMatch) continue;
+
+                            node.Childrens = filteredChildren;
+                            result.Add(node);
+                        }
+                        return result;
+                    }
+
+                    permissions = FilterTree(permissions);
+                }
 
                 var total = permissions.Count;
 

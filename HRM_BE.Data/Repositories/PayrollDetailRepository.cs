@@ -52,9 +52,21 @@ namespace HRM_BE.Data.Repositories
                 query = query.Where(p => p.OrganizationId == organizationId);
             }
 
-            if (!string.IsNullOrEmpty(name))
+            if (!string.IsNullOrWhiteSpace(name))
             {
-                query = query.Where(p => p.FullName.Contains(name));
+                var keyword = name.Trim();
+                var pattern = $"%{keyword}%";
+
+                query = query.Where(p =>
+                    (p.FullName != null && EF.Functions.Like(p.FullName, pattern)) ||
+                    (p.EmployeeCode != null && EF.Functions.Like(p.EmployeeCode, pattern)) ||
+                    (p.Employee != null && (
+                        (p.Employee.PhoneNumber != null && EF.Functions.Like(p.Employee.PhoneNumber, pattern)) ||
+                        (p.Employee.WorkPhoneNumber != null && EF.Functions.Like(p.Employee.WorkPhoneNumber, pattern)) ||
+                        (p.Employee.StaffPosition != null && p.Employee.StaffPosition.PositionName != null && EF.Functions.Like(p.Employee.StaffPosition.PositionName, pattern)) ||
+                        (p.Employee.StaffTitle != null && p.Employee.StaffTitle.StaffTitleName != null && EF.Functions.Like(p.Employee.StaffTitle.StaffTitleName, pattern))
+                    ))
+                );
             }
 
             // Áp dụng sắp xếp
@@ -199,6 +211,179 @@ namespace HRM_BE.Data.Repositories
 
             // Tính lại và lưu mới
             await CalculateAndSavePayrollDetails(payrollId);
+        }
+
+        public async Task Update(int id, UpdatePayrollDetailRequest request)
+        {
+            var payrollDetail = await _dbContext.PayrollDetails
+                .FirstOrDefaultAsync(p => p.Id == id && p.IsDeleted != true);
+
+            if (payrollDetail == null)
+            {
+                throw new EntityNotFoundException(nameof(PayrollDetail), $"Id = {id}");
+            }
+
+            var payroll = await _dbContext.Payrolls
+                .FirstOrDefaultAsync(p => p.Id == payrollDetail.PayrollId && p.IsDeleted != true);
+
+            if (payroll == null)
+            {
+                throw new EntityNotFoundException(nameof(Payroll), $"Id = {payrollDetail.PayrollId}");
+            }
+
+            if (payroll.PayrollStatus == PayrollStatus.Locked)
+            {
+                throw new Exception("Bảng lương đã khóa, không thể sửa phiếu lương.");
+            }
+
+            var shouldRecalcReceivedSalary = false;
+            var shouldRecalcKpiSalary = false;
+            var shouldRecalcTotalSalary = false;
+
+            if (request.BaseSalary.HasValue)
+            {
+                payrollDetail.BaseSalary = request.BaseSalary.Value;
+                shouldRecalcReceivedSalary = true;
+                shouldRecalcTotalSalary = true;
+            }
+
+            if (request.StandardWorkDays.HasValue)
+            {
+                payrollDetail.StandardWorkDays = request.StandardWorkDays.Value;
+                shouldRecalcReceivedSalary = true;
+                shouldRecalcTotalSalary = true;
+            }
+
+            if (request.ActualWorkDays.HasValue)
+            {
+                payrollDetail.ActualWorkDays = request.ActualWorkDays.Value;
+                shouldRecalcReceivedSalary = true;
+                shouldRecalcTotalSalary = true;
+            }
+
+            if (request.KPI.HasValue)
+            {
+                payrollDetail.KPI = request.KPI.Value;
+                shouldRecalcKpiSalary = true;
+                shouldRecalcTotalSalary = true;
+            }
+
+            if (request.KpiPercentage.HasValue)
+            {
+                payrollDetail.KpiPercentage = request.KpiPercentage.Value;
+                shouldRecalcKpiSalary = true;
+                shouldRecalcTotalSalary = true;
+            }
+
+            if (request.Bonus.HasValue)
+            {
+                payrollDetail.Bonus = request.Bonus.Value;
+                shouldRecalcTotalSalary = true;
+            }
+
+            if (request.SalaryRate.HasValue)
+            {
+                payrollDetail.SalaryRate = request.SalaryRate.Value;
+                shouldRecalcTotalSalary = true;
+            }
+
+            if (shouldRecalcReceivedSalary)
+            {
+                var baseSalary = payrollDetail.BaseSalary ?? 0;
+                var standardWorkDays = payrollDetail.StandardWorkDays ?? 0;
+                var actualWorkDays = payrollDetail.ActualWorkDays ?? 0;
+
+                payrollDetail.ReceivedSalary = standardWorkDays > 0
+                    ? (baseSalary / standardWorkDays) * (decimal)actualWorkDays
+                    : 0;
+            }
+
+            if (shouldRecalcKpiSalary)
+            {
+                var kpi = payrollDetail.KPI ?? 0;
+                var kpiPercentage = payrollDetail.KpiPercentage ?? 0;
+                payrollDetail.KpiSalary = kpi * (kpiPercentage / 100);
+            }
+
+            if (shouldRecalcTotalSalary)
+            {
+                var receivedSalary = payrollDetail.ReceivedSalary ?? 0;
+                var kpiSalary = payrollDetail.KpiSalary ?? 0;
+                var bonus = payrollDetail.Bonus ?? 0;
+                var salaryRate = payrollDetail.SalaryRate ?? 100;
+
+                payrollDetail.TotalSalary = (receivedSalary + kpiSalary + bonus) * (salaryRate / 100);
+
+                // TotalReceivedSalary = TotalSalary - tổng khấu trừ (lấy theo nhân viên)
+                var totalDeductions = 0m;
+                if (payrollDetail.EmployeeId.HasValue)
+                {
+                    totalDeductions = _dbContext.Deductions
+                        .Where(d => d.EmployeeId == payrollDetail.EmployeeId.Value)
+                        .Sum(d => d.Value) ?? 0;
+                }
+                payrollDetail.TotalReceivedSalary = payrollDetail.TotalSalary - totalDeductions;
+            }
+
+            await UpdateAsync(payrollDetail);
+        }
+
+        public async Task Delete(int id)
+        {
+            var payrollDetail = await _dbContext.PayrollDetails
+                .FirstOrDefaultAsync(p => p.Id == id && p.IsDeleted != true);
+
+            if (payrollDetail == null)
+            {
+                throw new EntityNotFoundException(nameof(PayrollDetail), $"Id = {id}");
+            }
+
+            var payroll = await _dbContext.Payrolls
+                .FirstOrDefaultAsync(p => p.Id == payrollDetail.PayrollId && p.IsDeleted != true);
+
+            if (payroll == null)
+            {
+                throw new EntityNotFoundException(nameof(Payroll), $"Id = {payrollDetail.PayrollId}");
+            }
+
+            if (payroll.PayrollStatus == PayrollStatus.Locked)
+            {
+                throw new Exception("Bảng lương đã khóa, không thể xóa phiếu lương.");
+            }
+
+            payrollDetail.IsDeleted = true;
+            await UpdateAsync(payrollDetail);
+        }
+
+        public async Task DeleteRange(List<int> ids)
+        {
+            if (ids == null || ids.Count == 0)
+            {
+                throw new Exception("Danh sách Id không được để trống.");
+            }
+
+            var payrollDetails = await _dbContext.PayrollDetails
+                .Where(p => ids.Contains(p.Id) && p.IsDeleted != true)
+                .ToListAsync();
+
+            if (payrollDetails.Count == 0)
+            {
+                return;
+            }
+
+            // Nếu bất kỳ phiếu lương nào thuộc bảng lương đã khóa thì chặn
+            var payrollIds = payrollDetails.Where(x => x.PayrollId.HasValue).Select(x => x.PayrollId!.Value).Distinct().ToList();
+            var lockedPayrollExists = await _dbContext.Payrolls.AnyAsync(p => payrollIds.Contains(p.Id) && p.IsDeleted != true && p.PayrollStatus == PayrollStatus.Locked);
+            if (lockedPayrollExists)
+            {
+                throw new Exception("Có bảng lương đã khóa, không thể xóa phiếu lương.");
+            }
+
+            foreach (var item in payrollDetails)
+            {
+                item.IsDeleted = true;
+            }
+            await UpdateRangeAsync(payrollDetails);
         }
 
         public async Task<List<PayrollDetailDto>> FetchPayrollDetails(int payrollId)

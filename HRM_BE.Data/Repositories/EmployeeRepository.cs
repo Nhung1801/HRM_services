@@ -125,7 +125,10 @@ namespace HRM_BE.Data.Repositories
                     query = query.Where(c =>
                         ((c.LastName ?? "").Trim() + " " + (c.FirstName ?? "").Trim()).Contains(firstTerm) ||
                         ((c.FirstName ?? "").Trim() + " " + (c.LastName ?? "").Trim()).Contains(firstTerm) ||
-                        (!string.IsNullOrEmpty(c.PhoneNumber) && c.PhoneNumber.Contains(keyWord)));
+                        (!string.IsNullOrEmpty(c.PhoneNumber) && c.PhoneNumber.Contains(keyWord)) ||
+                        (!string.IsNullOrEmpty(c.WorkPhoneNumber) && c.WorkPhoneNumber.Contains(keyWord)) ||
+                        (c.StaffPosition != null && !string.IsNullOrEmpty(c.StaffPosition.PositionName) && c.StaffPosition.PositionName.Contains(firstTerm)) ||
+                        (c.StaffTitle != null && !string.IsNullOrEmpty(c.StaffTitle.StaffTitleName) && c.StaffTitle.StaffTitleName.Contains(firstTerm)));
                     
                     // Bước 2: Áp dụng điều kiện cho các từ còn lại (chỉ kiểm tra tên, không kiểm tra số điện thoại nữa)
                     for (int i = 1; i < searchTerms.Count; i++)
@@ -134,7 +137,10 @@ namespace HRM_BE.Data.Repositories
                         query = query.Where(c =>
                             ((c.LastName ?? "").Trim() + " " + (c.FirstName ?? "").Trim()).Contains(term) ||
                             ((c.FirstName ?? "").Trim() + " " + (c.LastName ?? "").Trim()).Contains(term) ||
-                            (!string.IsNullOrEmpty(c.PhoneNumber) && c.PhoneNumber.Contains(keyWord)));
+                            (!string.IsNullOrEmpty(c.PhoneNumber) && c.PhoneNumber.Contains(keyWord)) ||
+                            (!string.IsNullOrEmpty(c.WorkPhoneNumber) && c.WorkPhoneNumber.Contains(keyWord)) ||
+                            (c.StaffPosition != null && !string.IsNullOrEmpty(c.StaffPosition.PositionName) && c.StaffPosition.PositionName.Contains(term)) ||
+                            (c.StaffTitle != null && !string.IsNullOrEmpty(c.StaffTitle.StaffTitleName) && c.StaffTitle.StaffTitleName.Contains(term)));
                     }
                 }
             }
