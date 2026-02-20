@@ -1,4 +1,4 @@
-﻿using HRM_BE.Api.Attributes;
+using HRM_BE.Api.Attributes;
 using HRM_BE.Api.Services;
 using HRM_BE.Api.Services.Interfaces;
 using HRM_BE.Core.Constants.Identity;
@@ -53,13 +53,45 @@ namespace HRM_BE.Api.Controllers.Identity
 
         [HttpPost("create")]
         //[HasPermission(PermissionConstant.ManagePermissionCreate)]
-        public async Task<PermissionDto> Create([FromBody] CreatePermissionRequest request)
+        public async Task<IActionResult> Create([FromBody] CreatePermissionRequest request)
         {
+            try
+            {
+                var permissionDto = await _permissionService.Create(request);
+                return Ok(ApiResult<PermissionDto>.Success("Thêm quyền hạn thành công", permissionDto));
+            }
+            catch (Exception ex)
+            {
+                return Ok(ApiResult<PermissionDto>.Failure(ex.Message, null));
+            }
+        }
 
-            var permissionDto = await _permissionService.Create(request);
+        [HttpPut("update")]
+        public async Task<IActionResult> Update([FromQuery] int id, [FromBody] UpdatePermissionRequest request)
+        {
+            try
+            {
+                await _permissionService.Update(id, request);
+                return Ok(ApiResult<bool>.Success("Cập nhật quyền hạn thành công", true));
+            }
+            catch (Exception ex)
+            {
+                return Ok(ApiResult<bool>.Failure(ex.Message, false));
+            }
+        }
 
-            return permissionDto;
-
+        [HttpPut("delete")]
+        public async Task<IActionResult> Delete([FromQuery] EntityIdentityRequest<int> request)
+        {
+            try
+            {
+                await _permissionService.Delete(request.Id);
+                return Ok(ApiResult<bool>.Success("Xóa quyền hạn thành công", true));
+            }
+            catch (Exception ex)
+            {
+                return Ok(ApiResult<bool>.Failure(ex.Message, false));
+            }
         }
     }
 }

@@ -212,6 +212,100 @@ namespace HRM_BE.Api.Services
 
         }
 
+        public async Task Update(int id, UpdatePermissionRequest request)
+        {
+            try
+            {
+                var permission = await _dbContext.Permissions.FirstOrDefaultAsync(p => p.Id == id);
+                if (permission == null)
+                {
+                    throw new ApiException("Không tìm thấy quyền hạn", HttpStatusCodeConstant.NotFound);
+                }
+
+                if (request.ParentPermissionId.HasValue && request.ParentPermissionId.Value == id)
+                {
+                    throw new ApiException("Quyền cha không hợp lệ", HttpStatusCodeConstant.BadRequest);
+                }
+
+                if (request.ParentPermissionId.HasValue)
+                {
+                    var parentExists = await _dbContext.Permissions.AnyAsync(p => p.Id == request.ParentPermissionId.Value);
+                    if (!parentExists)
+                    {
+                        throw new ApiException("Không tìm thấy quyền cha", HttpStatusCodeConstant.BadRequest);
+                    }
+                    permission.ParentPermissionId = request.ParentPermissionId;
+                }
+
+                if (request.Name != null)
+                {
+                    permission.Name = request.Name.Trim();
+                }
+
+                if (request.DisplayName != null)
+                {
+                    permission.DisplayName = request.DisplayName.Trim();
+                }
+
+                if (request.Description != null)
+                {
+                    permission.Description = request.Description;
+                }
+
+                if (request.Section.HasValue)
+                {
+                    permission.Section = request.Section;
+                }
+
+                permission.UpdatedAt = DateTime.Now;
+                _dbContext.Permissions.Update(permission);
+                await _dbContext.SaveChangesAsync();
+            }
+            catch (ApiException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new ApiException(ex.Message, HttpStatusCodeConstant.InternalServerError, ex);
+            }
+        }
+
+        public async Task Delete(int id)
+        {
+            try
+            {
+                var permission = await _dbContext.Permissions.FirstOrDefaultAsync(p => p.Id == id);
+                if (permission == null)
+                {
+                    throw new ApiException("Không tìm thấy quyền hạn", HttpStatusCodeConstant.NotFound);
+                }
+
+                var hasChildren = await _dbContext.Permissions.AnyAsync(p => p.ParentPermissionId == id);
+                if (hasChildren)
+                {
+                    throw new ApiException("Không thể xóa quyền đang có quyền con", HttpStatusCodeConstant.BadRequest);
+                }
+
+                var isAssigned = await _dbContext.RolePermissions.AnyAsync(rp => rp.PermissionId == id);
+                if (isAssigned)
+                {
+                    throw new ApiException("Không thể xóa quyền đã được gán cho vai trò", HttpStatusCodeConstant.BadRequest);
+                }
+
+                _dbContext.Permissions.Remove(permission);
+                await _dbContext.SaveChangesAsync();
+            }
+            catch (ApiException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new ApiException(ex.Message, HttpStatusCodeConstant.InternalServerError, ex);
+            }
+        }
+
 
     }
 }

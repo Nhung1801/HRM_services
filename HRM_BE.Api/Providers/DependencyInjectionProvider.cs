@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace HRM_BE.Api.Providers
 {
@@ -11,7 +12,15 @@ namespace HRM_BE.Api.Providers
             var serviceProjectNamespace = $"{Assembly.GetCallingAssembly().GetName().Name}.Services";
 
             var serviceTypes = assembly.GetTypes()
-                .Where(type => type.Namespace == serviceProjectNamespace && !type.IsAbstract && !type.IsInterface);
+                .Where(type =>
+                    type.Namespace == serviceProjectNamespace &&
+                    !type.IsAbstract &&
+                    !type.IsInterface &&
+                    !type.IsNested &&
+                    !type.IsGenericType &&
+                    !type.Name.Contains("<") &&
+                    !type.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
+                );
 
             foreach (var serviceType in serviceTypes)
             {
