@@ -1,4 +1,4 @@
-﻿using HRM_BE.Core.Data.Payroll_Timekeeping.Payroll;
+using HRM_BE.Core.Data.Payroll_Timekeeping.Payroll;
 using HRM_BE.Core.Data.Profile;
 using HRM_BE.Core.Models.ProfileInfoModel;
 using System;
@@ -31,6 +31,11 @@ namespace HRM_BE.Core.Models.Payroll_Timekeeping.Payroll
         public decimal? KpiSalary { get; set; } // Lương KPI
         public decimal? Bonus { get; set; } // Thưởng
         public decimal? SalaryRate { get; set; } // Tỉ lệ hưởng lương
+
+        public decimal? Revenue { get; set; } // Doanh thu kỳ này
+        public decimal? CommissionRate { get; set; } // % hoa hồng (vd 0.002)
+        public decimal? CommissionAmount { get; set; } // Tiền hoa hồng
+
         public decimal? TotalSalary { get; set; } // Tổng lương
         public decimal? TotalReceivedSalary { get; set; } // Tổng lương thực nhận
         public PayrollConfirmationStatusEmployee ConfirmationStatus { get; set; } // Trạng thái xác nhận lương của nhân viên
